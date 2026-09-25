@@ -24,8 +24,11 @@ const config = {
   adminPassword: process.env.ADMIN_PASSWORD || '',
   sessionSecret: process.env.SESSION_SECRET || '',
   // Tolerate values pasted with surrounding quotes/spaces, or with a trailing /rest/v1.
-  supabaseUrl: unquote(process.env.SUPABASE_URL).replace(/\/+$/, '').replace(/\/rest\/v1$/, ''),
-  supabaseKey: unquote(process.env.SUPABASE_SERVICE_ROLE_KEY).replace(/^Bearer\s+/i, ''),
+  // Host names are case-insensitive, so lower-case the URL.
+  supabaseUrl: unquote(process.env.SUPABASE_URL).toLowerCase().replace(/\/+$/, '').replace(/\/rest\/v1$/, ''),
+  // Keys never contain whitespace; remove any line breaks/spaces picked up while copying.
+  supabaseKey: unquote(process.env.SUPABASE_SERVICE_ROLE_KEY).replace(/^Bearer\s+/i, '').replace(/\s+/g, ''),
+  supabaseKeyRaw: String(process.env.SUPABASE_SERVICE_ROLE_KEY || ''),
   // Netlify Functions / AWS Lambda: no persistent disk, one request at a time per instance.
   isServerless: !!(process.env.NETLIFY || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.LAMBDA_TASK_ROOT),
   dataDir: DATA_DIR,

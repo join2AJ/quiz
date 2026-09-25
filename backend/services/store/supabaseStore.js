@@ -42,6 +42,15 @@ function projectRef(url) {
  * Configuration problems we can spot without calling Supabase (wrong kind of
  * key, key from another project, a URL that is not the project URL).
  */
+/** Safe description of the configured key: length and first 4 characters only. */
+function keyHint() {
+  const key = config.supabaseKey;
+  const raw = config.supabaseKeyRaw;
+  const notes = [`the value set is ${key.length} characters long and starts with "${key.slice(0, 4)}…"`];
+  if (/\s/.test(raw.trim())) notes.push('it contained spaces or line breaks');
+  return ` (For reference: ${notes.join('; ')}. A service_role key is about 200+ characters and starts with "eyJh"; a secret key starts with "sb_secret_".)`;
+}
+
 function configProblem() {
   const url = config.supabaseUrl;
   const key = config.supabaseKey;
@@ -49,13 +58,17 @@ function configProblem() {
   if (/supabase\.com\/dashboard/.test(url)) {
     return 'SUPABASE_URL is the dashboard address. Use the Project URL from Project Settings → API (https://<project>.supabase.co).';
   }
+  if (!key) return 'SUPABASE_SERVICE_ROLE_KEY is empty.';
+  if (/^(EYJ|SB_SECRET_|SB_PUBLISHABLE_)/.test(key)) {
+    return `SUPABASE_SERVICE_ROLE_KEY is in CAPITAL letters (Caps Lock?). Keys are case-sensitive — copy and paste it exactly from Supabase instead of typing it.${keyHint()}`;
+  }
   if (key.startsWith('sb_publishable_')) {
     return 'SUPABASE_SERVICE_ROLE_KEY is the publishable (public) key. Use the secret key: Project Settings → API Keys → Secret keys (sb_secret_…), or the legacy service_role key.';
   }
   if (key.startsWith('sb_secret_')) return null;
   const payload = jwtPayload(key);
   if (!payload) {
-    return 'SUPABASE_SERVICE_ROLE_KEY is not an API key. It looks like the JWT Secret or a partial copy. Copy the service_role key (a long value starting with "eyJ") or a secret key (sb_secret_…) from Project Settings → API Keys.';
+    return `SUPABASE_SERVICE_ROLE_KEY is not a Supabase API key — it may be the JWT Secret, the database password, or only part of the key. Copy the service_role key (starts with "eyJ") or a secret key (sb_secret_…) from Project Settings → API Keys using the copy button.${keyHint()}`;
   }
   if (payload.role === 'anon') {
     return 'SUPABASE_SERVICE_ROLE_KEY is the anon (public) key. Copy the service_role key instead (Project Settings → API Keys → Legacy API keys → service_role → Reveal).';
@@ -75,7 +88,7 @@ function explain(error) {
   const msg = String((error && error.message) || error || '');
   const code = error && error.code;
   if (/invalid api key|jwt|jws|no api key|apikey|unauthorized|legacy api keys are disabled/i.test(msg)) {
-    return { status: 503, message: `Supabase rejected the key (${msg}). ${configProblem() || 'Check that SUPABASE_SERVICE_ROLE_KEY is the service_role / secret key of the same project as SUPABASE_URL, then redeploy.'}` };
+    return { status: 503, message: `Supabase rejected the key (${msg}). ${configProblem() || `Check that SUPABASE_SERVICE_ROLE_KEY is the service_role / secret key of the same project as SUPABASE_URL, then redeploy.${keyHint()}`}` };
   }
   if (code === '42P01' || code === 'PGRST205' || /does not exist|could not find the table|schema cache/i.test(msg)) {
     return { status: 503, message: `Database tables are missing or out of date (${msg}). Run supabase/schema.sql in the Supabase SQL Editor.` };
