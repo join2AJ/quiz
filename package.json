@@ -1,0 +1,19 @@
+{
+  "name": "pass-section-quiz",
+  "version": "1.0.0",
+  "private": true,
+  "description": "PassSection Quiz Platform — bilingual (EN/HI) assessment portal with Excel-based storage",
+  "scripts": {
+    "postinstall": "npm --prefix backend install && npm --prefix frontend install",
+    "build": "npm --prefix frontend run build",
+    "start": "NODE_ENV=production node backend/server.js",
+    "dev": "concurrently -n api,web -c blue,green \"npm --prefix backend run dev\" \"npm --prefix frontend run dev\"",
+    "test": "npm --prefix backend test"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

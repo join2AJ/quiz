@@ -1,0 +1,62 @@
+{
+  "Section 1 — Knowledge (paste into section 1's Bulk import)": [
+    {
+      "type": "KNOWLEDGE",
+      "category": "TAEP Fundamentals",
+      "textEn": "Who is authorised to issue an Airport Entry Pass (AEP) for a civil airport?",
+      "textHi": "किसी नागरिक हवाई अड्डे के लिए एयरपोर्ट एंट्री पास (AEP) जारी करने के लिए कौन अधिकृत है?",
+      "options": [
+        { "en": "Any airline station manager", "hi": "कोई भी एयरलाइन स्टेशन मैनेजर" },
+        { "en": "The designated issuing authority as per BCAS regulations", "hi": "BCAS नियमों के अनुसार नामित जारीकर्ता प्राधिकारी" },
+        { "en": "The terminal duty officer", "hi": "टर्मिनल ड्यूटी अधिकारी" },
+        { "en": "The local police station", "hi": "स्थानीय पुलिस थाना" }
+      ],
+      "correct": "B",
+      "explanation": "Sample question — replace with your own content."
+    },
+    {
+      "type": "KNOWLEDGE",
+      "category": "Pass Verification",
+      "textEn": "Before issuing a pass, which document must always be verified?",
+      "textHi": "पास जारी करने से पहले किस दस्तावेज़ का सत्यापन हमेशा आवश्यक है?",
+      "options": [
+        { "en": "Valid photo identity proof", "hi": "वैध फोटो पहचान पत्र" },
+        { "en": "Bank statement", "hi": "बैंक स्टेटमेंट" },
+        { "en": "Electricity bill only", "hi": "केवल बिजली का बिल" },
+        { "en": "No document is required", "hi": "किसी दस्तावेज़ की आवश्यकता नहीं" }
+      ],
+      "correct": "A",
+      "explanation": "Sample question — replace with your own content."
+    }
+  ],
+  "Section 2 — Behaviour (paste into section 2's Bulk import)": [
+    {
+      "type": "BEHAVIOUR",
+      "category": "Anger Under Pressure",
+      "textEn": "An applicant starts shouting because their pass is delayed. What is the best first response?",
+      "textHi": "पास में देरी के कारण एक आवेदक चिल्लाने लगता है। सबसे अच्छी पहली प्रतिक्रिया क्या है?",
+      "options": [
+        { "en": "Shout back so they understand the rules", "hi": "नियम समझाने के लिए उन पर भी चिल्लाएं" },
+        { "en": "Ignore them until they calm down", "hi": "जब तक वे शांत न हों, उन्हें अनदेखा करें" },
+        { "en": "Stay calm, acknowledge the concern and explain the next steps", "hi": "शांत रहें, उनकी चिंता को समझें और अगले कदम बताएं" },
+        { "en": "Call security immediately", "hi": "तुरंत सुरक्षा बुलाएं" }
+      ],
+      "correct": "C",
+      "explanation": "Sample question — replace with your own content."
+    },
+    {
+      "type": "BEHAVIOUR",
+      "category": "Integrity",
+      "textEn": "A senior colleague asks you to skip a verification step 'just this once'. What do you do?",
+      "textHi": "एक वरिष्ठ सहकर्मी आपसे 'सिर्फ इस बार' सत्यापन का एक चरण छोड़ने को कहता है। आप क्या करेंगे?",
+      "options": [
+        { "en": "Skip it because they are senior", "hi": "वरिष्ठ होने के कारण चरण छोड़ दें" },
+        { "en": "Politely decline and follow the procedure", "hi": "विनम्रता से मना करें और प्रक्रिया का पालन करें" },
+        { "en": "Skip it but note it down privately", "hi": "चरण छोड़ दें लेकिन निजी तौर पर नोट कर लें" },
+        { "en": "Ask another colleague to do it instead", "hi": "किसी अन्य सहकर्मी से करवा लें" }
+      ],
+      "correct": "B",
+      "explanation": "Sample question — replace with your own content."
+    }
+  ]
+}

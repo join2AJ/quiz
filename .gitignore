@@ -1,0 +1,9 @@
+node_modules/
+frontend/dist/
+.env
+*.log
+.DS_Store
+# Runtime data (Excel files, logo) — never commit participant results
+backend/data/*
+!backend/data/.gitkeep
+!backend/data/sample-questions.json
