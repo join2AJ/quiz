@@ -8,6 +8,7 @@ import { ResultCard } from '../../pages/Result.jsx';
 import { AddParticipantForm, CsvUpload } from './ParticipantForms.jsx';
 import QuestionBank from './QuestionBank.jsx';
 import TagsTab from './TagsTab.jsx';
+import FindReplace from './FindReplace.jsx';
 
 const KIND = {
   correct: 'Full credit',
@@ -472,6 +473,7 @@ export default function ExamDetail() {
   const [participants, setParticipants] = useState([]);
   const [tab, setTab] = useState('questions');
   const [sections, setSections] = useState([]);
+  const [replacing, setReplacing] = useState(false);
   const [viewing, setViewing] = useState(null);
   const [error, setError] = useState('');
 
@@ -517,6 +519,7 @@ export default function ExamDetail() {
             <option>Results Released</option>
           </select>
           <Link className="btn btn-secondary" to={`/admin/exams/${id}/edit`}>Edit</Link>
+          <button type="button" className="btn btn-secondary" onClick={() => setReplacing(true)}>Find &amp; replace</button>
           <a className="btn btn-primary" href={`/api/admin/exams/${id}/download`}>⬇ Download Excel</a>
           <button type="button" className="btn btn-danger" onClick={remove}>Delete</button>
         </div>
@@ -539,6 +542,7 @@ export default function ExamDetail() {
       {tab === 'participants' && <ParticipantsTab exam={exam} participants={participants} reload={reload} onView={setViewing} />}
       {tab === 'results' && <ResultsTab participants={participants} onView={setViewing} />}
       {tab === 'analytics' && <AnalyticsTab examId={id} />}
+      {replacing && <FindReplace examId={id} onClose={() => setReplacing(false)} onDone={reload} />}
       {viewing && <ResultModal exam={exam} participant={viewing} onClose={() => setViewing(null)} />}
     </div>
   );

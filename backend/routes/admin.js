@@ -70,6 +70,8 @@ function normalizeConfig(input, existing = {}) {
     .filter((r) => r.condition || r.en || r.hi);
   const err = scoring.validateRemarkRules(out.remarkRules);
   if (err) throw httpError(400, err);
+  // Participants see "Part 1, Part 2…" unless this is turned on.
+  out.showSectionNames = !!c.showSectionNames;
   out.dimensions = {};
   for (const [key, d] of Object.entries(c.dimensions || {})) {
     const k = clean(key, 60).toLowerCase().replace(/[^a-z0-9_]/g, '_');
@@ -280,6 +282,58 @@ router.delete('/exams/:id', async (req, res) => {
   const exam = await loadExam(req.params.id);
   await store.deleteExam(exam);
   res.json({ ok: true });
+});
+
+// ---------------------------------------------------------------- find & replace text
+
+/** Every editable text field of an exam and its questions, as [label, get, set]. */
+function textFields(exam, sections) {
+  const fields = [];
+  const f = (label, obj, key) => fields.push({ label, get: () => String(obj[key] ?? ''), set: (v) => { obj[key] = v; } });
+  for (const k of ['title', 'team', 'site', 'instructions', 'instructionsHi']) f(`Exam ${k}`, exam, k);
+  sections.forEach((sec, si) => {
+    for (const k of ['name', 'nameHi', 'description', 'descriptionHi']) f(`Section ${si + 1} ${k}`, sec, k);
+    sec.questions.forEach((q) => {
+      const id = q.qid || `S${si + 1}`;
+      for (const k of ['textEn', 'textHi', 'scenarioEn', 'scenarioHi', 'category', 'explanation', 'explanationHi']) f(`${id} ${k}`, q, k);
+      q.options.forEach((o, oi) => {
+        f(`${id} option ${excel.OPTIONS[oi]} (EN)`, o, 'en');
+        f(`${id} option ${excel.OPTIONS[oi]} (HI)`, o, 'hi');
+      });
+      for (const l of excel.OPTIONS) if ((q.revealMap || {})[l]) f(`${id} reveals ${l}`, q.revealMap, l);
+    });
+  });
+  return fields;
+}
+
+/**
+ * Replace a word or phrase everywhere in an exam (e.g. LBIA -> LIAL).
+ * { find, replace, apply } — without apply it only previews the matches.
+ */
+router.post('/exams/:id/replace', async (req, res) => {
+  const exam = await loadExam(req.params.id);
+  const find = String(req.body.find || '');
+  const replace = String(req.body.replace ?? '');
+  if (find.trim().length < 2) throw httpError(400, 'Enter at least 2 characters to find');
+  const sections = await bankForEditor(exam);
+  const matches = [];
+  for (const fld of textFields(exam, sections)) {
+    const text = fld.get();
+    const count = text.split(find).length - 1;
+    if (count) matches.push({ field: fld.label, count, before: text, after: text.split(find).join(replace), fld });
+  }
+  const total = matches.reduce((n, m) => n + m.count, 0);
+  if (req.body.apply && total) {
+    for (const m of matches) m.fld.set(m.after);
+    await store.saveExam(exam);
+    await store.saveQuestionBank(exam, normalizeSections(sections));
+    await audit.log(req, 'ADMIN_EDIT_TEXT', { admin_username: 'admin', exam_id: exam.id, find, replace, replacements: total, fields: matches.length });
+  }
+  res.json({
+    applied: !!req.body.apply && total > 0,
+    total,
+    fields: matches.map((m) => ({ field: m.field, count: m.count, before: m.before.slice(0, 300), after: m.after.slice(0, 300) })),
+  });
 });
 
 // ---------------------------------------------------------------- participants per exam
@@ -601,7 +655,7 @@ router.post('/import', async (req, res) => {
 
   const meta = normalizeMeta({
     title: metaIn.title || 'Pass Section Knowledge & Behaviour Assessment 2026',
-    team: metaIn.team ?? 'Pass Section — LBIA',
+    team: metaIn.team ?? 'Pass Section — LIAL',
     site: metaIn.site ?? 'Lucknow International Airport',
     examDate: metaIn.examDate || new Date().toISOString().slice(0, 10),
     instructions: metaIn.instructions || '',

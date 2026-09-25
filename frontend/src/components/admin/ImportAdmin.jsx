@@ -1,20 +1,11 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../../api.js';
+import { recommendedInstructions } from './instructions.js';
 
-const DEFAULT_INSTRUCTIONS_EN = `1. This assessment has two sections: Knowledge and Behaviour. Questions are shown one at a time.
-2. Choose the one best answer for each question. Behaviour questions describe real situations — choose what you would actually do.
-3. Your answers are saved automatically. You can flag a question and come back to it before submitting.
-4. Use the EN / HI switch at the top right to change language at any time.
-5. Please stay on this page until you submit. Leaving the exam tab is recorded.
-6. Your result will be available 10 days after you submit.`;
-
-const DEFAULT_INSTRUCTIONS_HI = `1. इस मूल्यांकन में दो खंड हैं: ज्ञान और व्यवहार। प्रश्न एक-एक करके दिखाए जाते हैं।
-2. हर प्रश्न का एक सबसे उपयुक्त उत्तर चुनें। व्यवहार वाले प्रश्न वास्तविक परिस्थितियाँ बताते हैं — वही चुनें जो आप वास्तव में करेंगे।
-3. आपके उत्तर अपने-आप सहेजे जाते हैं। आप किसी प्रश्न को चिह्नित करके जमा करने से पहले उस पर लौट सकते हैं।
-4. भाषा बदलने के लिए ऊपर दाईं ओर EN / HI बटन का उपयोग करें।
-5. जमा करने तक कृपया इसी पेज पर रहें। परीक्षा टैब छोड़ना दर्ज किया जाता है।
-6. आपका परिणाम जमा करने के 10 दिन बाद उपलब्ध होगा।`;
+const RECOMMENDED = recommendedInstructions(10);
+const DEFAULT_INSTRUCTIONS_EN = RECOMMENDED.en;
+const DEFAULT_INSTRUCTIONS_HI = RECOMMENDED.hi;
 
 function summarize(db) {
   const sections = Object.entries(db.questions || {}).filter(([, v]) => Array.isArray(v));
@@ -49,7 +40,7 @@ export default function ImportAdmin() {
   const targetExam = exams.find((e) => e.id === target);
   const [meta, setMeta] = useState({
     title: 'Pass Section Knowledge & Behaviour Assessment 2026',
-    team: 'Pass Section — LBIA',
+    team: 'Pass Section — LIAL',
     site: 'Lucknow International Airport',
     examDate: new Date().toISOString().slice(0, 10),
     status: 'Active',

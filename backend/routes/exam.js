@@ -32,13 +32,16 @@ function publicExam(exam) {
   };
 }
 
-/** Questions as the participant may see them: no correct option, no explanation. */
+function showSectionNames(exam) {
+  return !!(exam.config && exam.config.showSectionNames);
+}
+
+/** Questions as the participant may see them: no correct option, explanation or category. */
 function sanitizeQuestions(bank) {
   return bank.questions.map((q) => ({
     no: q.no,
     sectionNo: q.sectionNo,
-    type: q.type,
-    category: q.category,
+    type: q.type, // only used for the suggested time per question
     textEn: q.textEn,
     textHi: q.textHi,
     scenarioEn: q.scenarioEn || '',
@@ -80,8 +83,14 @@ async function examView(exam, username) {
   const [bank, attempt] = await Promise.all([cachedBank(exam), store.getAttempt(exam.id, username)]);
   const view = {
     exam: publicExam(exam),
+    // Unless the exam is set to show them, section names/descriptions are not
+    // sent to participants (they see "Part 1, Part 2…"), so labels such as
+    // "Behaviour" do not steer their answers.
     sections: bank.sections.map((s) => ({
-      ...s,
+      no: s.no,
+      ...(showSectionNames(exam)
+        ? { name: s.name, nameHi: s.nameHi, description: s.description, descriptionHi: s.descriptionHi }
+        : { name: '', nameHi: '', description: '', descriptionHi: '' }),
       questionCount: bank.questions.filter((q) => q.sectionNo === s.no).length,
     })),
     totalQuestions: bank.questions.length,

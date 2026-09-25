@@ -76,6 +76,11 @@ const hi = {
   knowledgeAreas: 'ज्ञान के क्षेत्र',
   behaviourAreas: 'व्यवहार के क्षेत्र',
 
+  partLabel: 'भाग {n}',
+
+  parts: 'भाग',
+  totalParts: 'कुल भाग',
+
   // Review
   reviewTitle: 'अपने उत्तरों की समीक्षा करें',
   reviewHint: 'किसी प्रश्न पर वापस जाने के लिए उसकी पंक्ति पर क्लिक करें।',

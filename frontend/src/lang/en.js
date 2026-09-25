@@ -76,6 +76,11 @@ const en = {
   knowledgeAreas: 'Knowledge areas',
   behaviourAreas: 'Behaviour areas',
 
+  partLabel: 'Part {n}',
+
+  parts: 'Parts',
+  totalParts: 'Total parts',
+
   // Review
   reviewTitle: 'Review your answers',
   reviewHint: 'Click any row to go back to that question.',

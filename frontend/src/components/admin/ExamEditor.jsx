@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { api } from '../../api.js';
+import { recommendedInstructions } from './instructions.js';
 
 const OPTION_KEYS = ['A', 'B', 'C', 'D'];
 
@@ -408,7 +409,7 @@ export default function ExamEditor() {
         <legend>Exam details</legend>
         <div className="form-grid">
           <label className="field span-2"><span>Exam title</span><input value={form.title} onChange={set('title')} placeholder="Pass Section Knowledge & Behaviour Assessment 2026" required /></label>
-          <label className="field"><span>Team name</span><input value={form.team} onChange={set('team')} placeholder="Pass Section — LBIA" /></label>
+          <label className="field"><span>Team name</span><input value={form.team} onChange={set('team')} placeholder="Pass Section — LIAL" /></label>
           <label className="field"><span>Site / Location</span><input value={form.site} onChange={set('site')} placeholder="Lucknow International Airport" /></label>
           <label className="field"><span>Exam date</span><input type="date" value={form.examDate} onChange={set('examDate')} /></label>
           <label className="field"><span>Status</span>
@@ -420,6 +421,19 @@ export default function ExamEditor() {
           </label>
           <label className="field"><span>Result unlock delay (days after submission)</span><input type="number" min="0" value={form.unlockDays} onChange={set('unlockDays')} /></label>
           <label className="field"><span>Estimated time (minutes)</span><input type="number" min="1" value={form.estimatedMinutes} onChange={set('estimatedMinutes')} placeholder={`default: ${totalQ || 'number of questions'}`} /></label>
+          <div className="span-2 row-actions">
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              onClick={() => {
+                const r = recommendedInstructions(form.unlockDays || 10);
+                setForm((f) => ({ ...f, instructions: r.en, instructionsHi: r.hi }));
+              }}
+            >
+              Use recommended instructions (EN + HI)
+            </button>
+            <span className="muted small">Neutral wording: does not name sections or what is being assessed.</span>
+          </div>
           <label className="field span-2"><span>Instructions (English)</span><textarea rows={4} value={form.instructions} onChange={set('instructions')} /></label>
           <label className="field span-2"><span>Instructions (Hindi)</span><textarea rows={4} value={form.instructionsHi} onChange={set('instructionsHi')} /></label>
         </div>
@@ -438,6 +452,13 @@ export default function ExamEditor() {
             <input type="number" min="0" value={(form.config.timerSeconds || {}).BEHAVIOUR ?? ''} onChange={(e) => setCfg({ timerSeconds: { ...form.config.timerSeconds, BEHAVIOUR: e.target.value } })} placeholder="none" />
           </label>
         </div>
+        <label className="row-actions" style={{ marginBottom: '0.75rem' }}>
+          <input type="checkbox" checked={!!form.config.showSectionNames} onChange={(e) => setCfg({ showSectionNames: e.target.checked })} />
+          <span>
+            Show section names to staff during the exam. <span className="muted small">Off (recommended): staff see only “Part 1, Part 2…”, so labels such as
+            “Behaviour” don't steer their answers. Section names still appear on their result card.</span>
+          </span>
+        </label>
         <p className="muted small">
           Each question is worth its weight in points. Partial-credit options earn the percentage above. Suggested seconds are shown to
           participants as a guide (the timer turns orange when exceeded); they do not end the question.

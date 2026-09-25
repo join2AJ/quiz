@@ -83,6 +83,9 @@ test('import database, score behaviour with partial credit, audit chain', async 
     assert.ok(!raw.includes(secret), `participant payload leaks "${secret}"`);
   }
   assert.equal(started.data.questions[2].scenarioEn, 'You are alone.');
+  // Section names are hidden from participants by default ("Part 1, Part 2…").
+  assert.deepEqual(started.data.sections.map((x) => x.name), ['', '']);
+  assert.equal(started.data.questions[0].category, undefined);
   assert.equal(started.data.exam.timerSeconds.KNOWLEDGE, 30);
 
   const ev = (body) => p('POST', `/api/exam/${examId}/event`, body);
@@ -158,6 +161,16 @@ test('import database, score behaviour with partial credit, audit chain', async 
   const key = XLSX.utils.sheet_to_json(wb.Sheets['Answer Key']).find((k) => k.QID === 'B01');
   assert.equal(key['Partial Credit Options'], 'A');
   assert.equal(key['Concern Options'], 'C');
+
+  // Find & replace: preview, then apply across questions and exam fields.
+  const pv = await admin('POST', `/api/admin/exams/${examId}/replace`, { find: 'Knowledge Q', replace: 'Rule Q' });
+  assert.equal(pv.data.applied, false);
+  assert.equal(pv.data.total, 2);
+  const ap = await admin('POST', `/api/admin/exams/${examId}/replace`, { find: 'Knowledge Q', replace: 'Rule Q', apply: true });
+  assert.equal(ap.data.applied, true);
+  const afterReplace = await admin('GET', `/api/admin/exams/${examId}`);
+  assert.equal(afterReplace.data.sections[0].questions[0].textEn, 'Rule Q1?');
+  assert.deepEqual(afterReplace.data.sections[1].questions[1].fullCredit, ['A']); // scoring untouched
 
   // Behaviour posture and tag analytics are computed per individual.
   const posture = an.postures.find((x) => x.username === 'test.one');

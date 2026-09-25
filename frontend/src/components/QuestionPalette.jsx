@@ -19,7 +19,7 @@ export default function QuestionPalette({ questions, sections, current, progress
       </div>
       {sections.map((s) => (
         <div key={s.no} className="palette-section">
-          <div className="palette-section-name">{t('sectionLabel', { n: s.no, name: pick(s.name, s.nameHi) })}</div>
+          <div className="palette-section-name">{s.name ? t('sectionLabel', { n: s.no, name: pick(s.name, s.nameHi) }) : t('partLabel', { n: s.no })}</div>
           <div className="palette-grid">
             {questions
               .filter((q) => q.sectionNo === s.no)

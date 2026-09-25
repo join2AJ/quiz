@@ -30,10 +30,18 @@ import QuestionPalette from '../components/QuestionPalette.jsx';
 import Modal from '../components/Modal.jsx';
 import Review from './Review.jsx';
 
+/** "Section 1 — Knowledge", or just "Part 1" when names are hidden from participants. */
+export function useSectionTitle() {
+  const { t, pick } = useLang();
+  return (s) => (s.name ? t('sectionLabel', { n: s.no, name: pick(s.name, s.nameHi) }) : t('partLabel', { n: s.no }));
+}
+
 function PreExam({ data, onBegin, busy, error }) {
   const { t, pick, formatDate } = useLang();
+  const sectionTitle = useSectionTitle();
   const { exam, sections, totalQuestions } = data;
   const minutes = exam.estimatedMinutes || totalQuestions;
+  const named = sections.some((s) => s.name);
   const instructions = pick(exam.instructions, exam.instructionsHi);
   return (
     <main className="container narrow">
@@ -46,14 +54,14 @@ function PreExam({ data, onBegin, busy, error }) {
         </dl>
         <div className="stat-row">
           <div className="stat"><span className="stat-value">{totalQuestions}</span><span className="stat-label">{t('totalQuestions')}</span></div>
-          <div className="stat"><span className="stat-value">{sections.length}</span><span className="stat-label">{t('totalSections')}</span></div>
+          <div className="stat"><span className="stat-value">{sections.length}</span><span className="stat-label">{named ? t('totalSections') : t('totalParts')}</span></div>
           <div className="stat"><span className="stat-value">{t('minutes', { n: minutes })}</span><span className="stat-label">{t('estimatedTime')}</span></div>
         </div>
-        <h2>{t('sections')}</h2>
+        <h2>{named ? t('sections') : t('parts')}</h2>
         <ul className="section-list">
           {sections.map((s) => (
             <li key={s.no}>
-              <strong>{t('sectionLabel', { n: s.no, name: pick(s.name, s.nameHi) })}</strong>
+              <strong>{sectionTitle(s)}</strong>
               <span className="muted"> — {t('questionsCount', { n: s.questionCount })}</span>
               {pick(s.description, s.descriptionHi) && <p className="muted pre">{pick(s.description, s.descriptionHi)}</p>}
             </li>
@@ -85,6 +93,7 @@ export default function Exam() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { t, pick, lang } = useLang();
+  const sectionTitle = useSectionTitle();
   const { user } = useAuth();
   const username = (user && user.username) || '';
 
@@ -375,7 +384,7 @@ export default function Exam() {
           ) : (
             <div className="card question-card">
               <div className="question-meta">
-                <span className="section-chip">{t('sectionLabel', { n: section.no, name: pick(section.name, section.nameHi) })}</span>
+                <span className="section-chip">{sectionTitle(section)}</span>
                 <span className="muted">{t('questionOf', { n: q.no, total: questions.length })}</span>
               </div>
               {scenario && (
