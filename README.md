@@ -253,6 +253,39 @@ download everything as Excel. Each exam's Excel download also includes an `Audit
 The Analytics tab shows **integrity signals** per participant (tab switches, time away from the exam tab, answer changes,
 language switches). The exam instructions tell participants that leaving the tab is recorded.
 
+## Capacity and reliability
+
+**Load test** (Supabase-style database, all 66 questions, everyone at the same moment):
+
+| | |
+|---|---|
+| Participants at once | 100, each clicking non-stop (about 30× faster than people really answer) |
+| Requests | ~14,000 in 70 s, **0 server errors** |
+| Submissions recorded | 100 of 100, 66 answers each |
+| Saves deliberately dropped | 325 → **all recovered**, 0 wrong answers |
+| Audit log | 21,952 entries, chain verified intact |
+
+How answers are protected:
+1. **Autosave on every click.** Each person's progress is saved in its own database row, so participants never
+   block or overwrite each other.
+2. **Retries.** A failed save is retried automatically and then again every few seconds. Meanwhile the participant
+   sees "Connection problem — your answers are kept on this device…".
+3. **On-device copy.** Answers are also stored in the browser until submission, so a refresh or a dropped connection
+   loses nothing.
+4. **Recovery at submit.** Submission sends every answer shown on screen, and the server fills in any save that never
+   arrived (recorded in the audit log as `recovered_at_submit`).
+5. **Results are stored at submission.** Scores, the question-wise answers and the audit trail are written to the
+   database when each person submits. Nothing depends on a later step.
+
+Practical limits on the free tiers:
+- **Supabase free projects pause after about a week without activity.** Open the site (or `/api/health`) the day before
+  the exam. Consider the Pro plan for automatic daily backups.
+- Netlify Functions return files up to about 6 MB. If an exam's Excel file would be larger (more than about 100–150
+  participants with full click logs), the per-click audit rows are left out of that file. The complete log is always
+  available from Admin → Audit log.
+- Netlify free includes 125,000 function requests a month. One participant uses about 150–250.
+- **After every exam, download the Excel file and the audit log** as your own offline record.
+
 ## 7. Security notes
 
 - The answer key is stored in the exam workbook and read only by the scoring code on the server.

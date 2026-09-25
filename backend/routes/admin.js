@@ -8,9 +8,21 @@ const audit = require('../services/auditService');
 const { attemptInfo } = require('./exam');
 const { resultCard } = require('./result');
 
+const cache = require('../services/cache');
+
 const router = express.Router();
 
+// Any admin change (exam, questions, status, assignments) clears this
+// instance's exam cache so it takes effect immediately here.
+router.use((req, res, next) => {
+  if (req.method !== 'GET') cache.clear();
+  next();
+});
+
 const STATUSES = ['Active', 'Closed', 'Results Released'];
+// Netlify Functions return at most ~6 MB (base64-encoded), so keep files below ~4.3 MB.
+const MAX_DOWNLOAD_BYTES = 4.3 * 1024 * 1024;
+const CLICK_EVENTS = ['QUESTION_VIEW', 'NAVIGATION', 'ANSWER_SELECT'];
 const USERNAME_RE = /^[a-z0-9._-]{3,40}$/;
 
 function httpError(status, message) {
@@ -359,14 +371,20 @@ router.get('/exams/:id/download', async (req, res) => {
   ]);
   const summary = scoring.refreshRemarks(rawSummary, exam);
   await audit.log(req, 'ADMIN_DOWNLOAD_EXCEL', { admin_username: 'admin', exam_id: exam.id, file_generated: exam.fileName });
-  const auditRows = audit.toRows((await store.getAudit({ examId: exam.id })).sort((a, b) => a.seq - b.seq));
-  const buf = excel.buildResultsWorkbook({
-    summary,
-    responses,
-    bank,
-    analyticsAoa: scoring.buildAnalyticsSheet(summary, responses, bank, exam),
-    auditRows,
-  });
+  const entries = (await store.getAudit({ examId: exam.id })).sort((a, b) => a.seq - b.seq);
+  const build = (auditRows) =>
+    excel.buildResultsWorkbook({ summary, responses, bank, analyticsAoa: scoring.buildAnalyticsSheet(summary, responses, bank, exam), auditRows });
+  // Serverless responses are limited to ~6 MB. Results always come first: if
+  // the file would be too large, the Audit_Log sheet keeps only key events
+  // (logins, starts, changes, tab switches, submits, admin actions) and
+  // the complete log stays downloadable from the Audit log page.
+  let buf = build(audit.toRows(entries));
+  if (buf.length > MAX_DOWNLOAD_BYTES) {
+    const key = entries.filter((e) => !CLICK_EVENTS.includes(e.event));
+    const note = { Seq: '', Event: 'NOTE', Details: `Per-click events (${CLICK_EVENTS.join(', ')}) omitted to keep this file downloadable. Download the full log from Admin → Audit log.` };
+    buf = build([note, ...audit.toRows(key)]);
+    if (buf.length > MAX_DOWNLOAD_BYTES) buf = build([{ ...note, Details: 'Audit log omitted from this file because of its size. Download it from Admin → Audit log.' }]);
+  }
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.setHeader(
     'Content-Disposition',
@@ -715,22 +733,30 @@ router.get('/audit/verify', async (req, res) => {
 router.get('/audit/download', async (req, res) => {
   const examId = clean(req.query.examId, 40) || undefined;
   const [entries, check] = await Promise.all([store.getAudit({ examId }), audit.verify()]);
-  const rows = audit.toRows(entries.sort((a, b) => a.seq - b.seq));
-  const buf = excel.buildSheetsWorkbook([
-    { name: 'Audit_Log', rows },
+  const sorted = entries.sort((a, b) => a.seq - b.seq);
+  // ?detail=key leaves out per-click events; used automatically if the full file is too large.
+  const onlyKey = req.query.detail === 'key';
+  const makeRows = (keyOnly) => audit.toRows(keyOnly ? sorted.filter((e) => !CLICK_EVENTS.includes(e.event)) : sorted);
+  let rows = makeRows(onlyKey);
+  let buf;
+  const verificationRows = (note) => [
     {
-      name: 'Verification',
-      rows: [
-        {
-          'Checked At (UTC)': new Date().toISOString(),
-          'Chain Intact': check.ok ? 'YES' : 'NO',
-          'Entries Checked': check.count,
-          'First Problem': check.ok ? '' : `#${check.brokenAt}: ${check.reason}`,
-          'Last Hash': check.lastHash || '',
-        },
-      ],
+      'Checked At (UTC)': new Date().toISOString(),
+      'Chain Intact': check.ok ? 'YES' : 'NO',
+      'Entries Checked': check.count,
+      'First Problem': check.ok ? '' : `#${check.brokenAt}: ${check.reason}`,
+      'Last Hash': check.lastHash || '',
+      Note: note || '',
     },
-  ]);
+  ];
+  buf = excel.buildSheetsWorkbook([{ name: 'Audit_Log', rows }, { name: 'Verification', rows: verificationRows(onlyKey ? 'Per-click events omitted (detail=key).' : '') }]);
+  if (buf.length > MAX_DOWNLOAD_BYTES && !onlyKey) {
+    rows = makeRows(true);
+    buf = excel.buildSheetsWorkbook([
+      { name: 'Audit_Log', rows },
+      { name: 'Verification', rows: verificationRows(`Per-click events (${CLICK_EVENTS.join(', ')}) omitted because the full log is too large for one download. Filter by exam to download them.`) },
+    ]);
+  }
   const name = `Audit_Log${examId ? `_${examId}` : ''}_${new Date().toISOString().slice(0, 10)}.xlsx`;
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.setHeader('Content-Disposition', `attachment; filename="${name}"`);

@@ -4,6 +4,14 @@ const { OPTIONS } = require('../services/excelService');
 const timer = require('../services/timerService');
 const scoring = require('../services/scoringService');
 const audit = require('../services/auditService');
+const cache = require('../services/cache');
+
+// Exam content rarely changes during an exam; admin edits reach every
+// instance within this time.
+const TTL = 15 * 1000;
+const cachedExam = (id) => cache.get(`exam:${id}`, TTL, () => store.getExam(id));
+const cachedAssigned = (id, username) => cache.get(`assigned:${id}:${username}`, TTL, () => store.isAssigned(id, username));
+const cachedBank = (exam) => cache.get(`bank:${exam.id}`, TTL, () => store.getQuestionBank(exam));
 
 const router = express.Router();
 
@@ -69,7 +77,7 @@ function progressOf(attempt) {
 }
 
 async function examView(exam, username) {
-  const [bank, attempt] = await Promise.all([store.getQuestionBank(exam), store.getAttempt(exam.id, username)]);
+  const [bank, attempt] = await Promise.all([cachedBank(exam), store.getAttempt(exam.id, username)]);
   const view = {
     exam: publicExam(exam),
     sections: bank.sections.map((s) => ({
@@ -90,8 +98,8 @@ async function examView(exam, username) {
 /** Loads the exam and verifies the participant is assigned to it (404 otherwise). */
 async function loadAssignedExam(req, res) {
   const [exam, assigned] = await Promise.all([
-    store.getExam(req.params.id),
-    store.isAssigned(req.params.id, req.session.user.username),
+    cachedExam(req.params.id),
+    cachedAssigned(req.params.id, req.session.user.username),
   ]);
   if (!exam || !assigned) {
     res.status(404).json({ error: 'Exam not found' });
@@ -123,8 +131,10 @@ router.post('/:id/start', async (req, res) => {
   const { username } = req.session.user;
   const existing = await store.getAttempt(exam.id, username);
   if (!existing) {
-    if (exam.status !== 'Active') return res.status(409).json({ error: 'This exam is not open.' });
-    const bank = await store.getQuestionBank(exam);
+    // Read the status fresh so opening the exam takes effect immediately.
+    const fresh = await store.getExam(exam.id);
+    if (!fresh || fresh.status !== 'Active') return res.status(409).json({ error: 'This exam is not open.' });
+    const bank = await cachedBank(exam);
     if (!bank.questions.length) return res.status(409).json({ error: 'This exam has no questions yet.' });
     const state = timer.recordView({}, 1);
     await store.saveAttempt(exam.id, {
@@ -156,7 +166,7 @@ router.post('/:id/event', async (req, res) => {
   const { username } = req.session.user;
   const attempt = await store.getAttempt(exam.id, username);
   if (!attempt || attempt.status !== 'in_progress') return res.status(409).json({ error: 'Exam not in progress' });
-  const bank = await store.getQuestionBank(exam);
+  const bank = await cachedBank(exam);
   const { type, q, option, flagged } = req.body || {};
   // Review / submit events are not tied to a question; everything else is.
   const needsQuestion = !['review', 'submit_attempt'].includes(type);
@@ -265,9 +275,29 @@ router.post('/:id/submit', async (req, res) => {
   if (!attempt) return res.status(409).json({ error: 'Exam not started' });
   if (attempt.status === 'submitted') return res.json({ attempt: attemptInfo(exam, attempt) });
 
-  const [bank, user] = await Promise.all([store.getQuestionBank(exam), store.getUser(username)]);
+  const [bank, user] = await Promise.all([cachedBank(exam), store.getUser(username)]);
   attempt.submittedAt = new Date().toISOString();
   const end = new Date(attempt.submittedAt).getTime();
+
+  // Safety net: the browser sends every answer it shows on screen. Any answer
+  // or flag whose autosave never reached the server (network drop, timeout)
+  // is recovered here, so nothing the participant chose is lost.
+  const reconciled = [];
+  const sent = req.body && typeof req.body.answers === 'object' && req.body.answers ? req.body.answers : null;
+  if (sent) {
+    const flags = (req.body.flags && typeof req.body.flags === 'object' && req.body.flags) || {};
+    for (const qq of bank.questions) {
+      const clientAnswer = String(sent[qq.no] || '').toUpperCase();
+      if (clientAnswer && !OPTIONS.includes(clientAnswer)) continue;
+      const serverAnswer = ((attempt.state.q || {})[qq.no] || {}).answer || '';
+      if (clientAnswer !== serverAnswer) {
+        timer.recordAnswer(attempt.state, qq.no, clientAnswer, end);
+        reconciled.push({ question_id: qq.qid, server_had: serverAnswer || null, browser_had: clientAnswer || null });
+      }
+      const serverFlag = !!((attempt.state.q || {})[qq.no] || {}).flagged;
+      if (!!flags[qq.no] !== serverFlag) timer.recordFlag(attempt.state, qq.no, !!flags[qq.no], end);
+    }
+  }
   // A tab that is still hidden at submit time counts until now.
   if (attempt.state.hiddenAt) {
     attempt.state.hiddenMs = (attempt.state.hiddenMs || 0) + Math.max(0, end - attempt.state.hiddenAt);
@@ -280,12 +310,16 @@ router.post('/:id/submit', async (req, res) => {
   await store.saveSubmission(exam, summaryRow, responseRows, (s, r) => scoring.buildAnalyticsSheet(s, r, bank, exam));
   attempt.result = result;
   await store.saveAttempt(exam.id, attempt);
+  for (const r of reconciled) {
+    await audit.log(req, 'ANSWER_SELECT', { username, exam_id: exam.id, ...r, recovered_at_submit: true });
+  }
   await audit.log(req, 'SUBMIT_CONFIRM', {
     username,
     exam_id: exam.id,
     total_time_seconds: result.totalSeconds,
     answers_submitted: result.answered,
     unanswered_count: result.questionCount - result.answered,
+    answers_recovered_at_submit: reconciled.length,
   });
   req.session.activeExam = null;
   res.json({ attempt: attemptInfo(exam, attempt), name: user.name, nameHi: user.nameHi || '' });

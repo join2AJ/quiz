@@ -66,7 +66,7 @@ const en = {
   legendFlagged: 'Flagged',
   saving: 'Saving…',
   saved: 'Saved',
-  saveFailed: 'Not saved — check your connection',
+  saveFailed: 'Connection problem — your answers are kept on this device and will be saved automatically',
   clearAnswer: 'Clear answer',
 
   scenario: 'Situation',

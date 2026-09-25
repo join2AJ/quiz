@@ -2,6 +2,28 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { api, formatDuration } from '../api.js';
 import { useLang } from '../context/LanguageContext.jsx';
+import { useAuth } from '../context/AuthContext.jsx';
+
+// Answers are also kept on this device until submission, so a refresh or a
+// network outage never loses what the participant chose.
+function backupKey(examId, username) {
+  return `psq_backup:${examId}:${username}`;
+}
+function readBackup(examId, username) {
+  try {
+    return JSON.parse(localStorage.getItem(backupKey(examId, username)) || 'null');
+  } catch {
+    return null;
+  }
+}
+function writeBackup(examId, username, value) {
+  try {
+    if (value) localStorage.setItem(backupKey(examId, username), JSON.stringify(value));
+    else localStorage.removeItem(backupKey(examId, username));
+  } catch {
+    /* storage unavailable — the server copy and submit-time recovery still apply */
+  }
+}
 import TopBar from '../components/TopBar.jsx';
 import LanguageToggle from '../components/LanguageToggle.jsx';
 import QuestionPalette from '../components/QuestionPalette.jsx';
@@ -63,6 +85,8 @@ export default function Exam() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { t, pick, lang } = useLang();
+  const { user } = useAuth();
+  const username = (user && user.username) || '';
 
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
@@ -80,27 +104,52 @@ export default function Exam() {
   const offsetRef = useRef(0);
   const queueRef = useRef(Promise.resolve());
   const pendingRef = useRef(0);
+  const failedRef = useRef([]); // events that could not be saved yet; retried in the background
   const qTimeRef = useRef({}); // no -> accumulated ms this session
   const shownAtRef = useRef(Date.now());
   const currentRef = useRef(1);
   const langRef = useRef(lang);
   currentRef.current = current;
 
+  const recoverRef = useRef([]); // events to re-send after loading a device backup
+
   const load = useCallback((view) => {
     offsetRef.current = new Date(view.serverTime).getTime() - Date.now();
     if (view.attempt.status === 'submitted') {
+      writeBackup(id, username, null);
       navigate(`/exam/${id}/thank-you`, { replace: true });
       return;
     }
     setData(view);
     if (view.progress) {
+      let answersNow = view.progress.answers;
+      let flagsNow = view.progress.flags;
+      // Merge a newer on-device copy (answers chosen while the network was down).
+      const backup = readBackup(id, username);
+      if (backup && backup.startedAt === view.attempt.startedAt) {
+        const recovered = [];
+        for (const [no, opt] of Object.entries(backup.answers || {})) {
+          if (answersNow[no] !== opt) recovered.push({ type: 'answer', q: Number(no), option: opt });
+        }
+        for (const no of Object.keys(answersNow)) {
+          if (!(backup.answers || {})[no]) recovered.push({ type: 'answer', q: Number(no), option: '' });
+        }
+        for (const no of new Set([...Object.keys(backup.flags || {}), ...Object.keys(flagsNow)])) {
+          if (!!(backup.flags || {})[no] !== !!flagsNow[no]) recovered.push({ type: 'flag', q: Number(no), flagged: !!(backup.flags || {})[no] });
+        }
+        if (recovered.length) {
+          answersNow = { ...(backup.answers || {}) };
+          flagsNow = { ...(backup.flags || {}) };
+          recoverRef.current = recovered;
+        }
+      }
       setCurrent(view.progress.current || 1);
-      setAnswers(view.progress.answers);
-      setFlags(view.progress.flags);
+      setAnswers(answersNow);
+      setFlags(flagsNow);
       setVisited({ ...view.progress.visited, [view.progress.current || 1]: true });
       shownAtRef.current = Date.now();
     }
-  }, [id, navigate]);
+  }, [id, navigate, username]);
 
   useEffect(() => {
     api(`/exam/${id}`)
@@ -123,23 +172,49 @@ export default function Exam() {
       setSaveState('saving');
       queueRef.current = queueRef.current.then(async () => {
         let ok = false;
-        for (let attempt = 0; attempt < 3 && !ok; attempt += 1) {
+        let permanent = false;
+        for (let attempt = 0; attempt < 4 && !ok; attempt += 1) {
           try {
             await api(`/exam/${id}/event`, { method: 'POST', body: event, keepalive: true });
             ok = true;
           } catch (e) {
-            if (e.status && e.status < 500) break;
-            await new Promise((r) => setTimeout(r, 800 * (attempt + 1)));
+            if (e.status && e.status < 500 && e.status !== 408 && e.status !== 429) {
+              permanent = true;
+              break;
+            }
+            await new Promise((r) => setTimeout(r, 700 * (attempt + 1)));
           }
         }
         pendingRef.current -= 1;
+        // Keep answers/flags that could not be saved and retry them in the background.
+        if (!ok && !permanent && (event.type === 'answer' || event.type === 'flag')) failedRef.current.push(event);
         if (!ok) setSaveState('error');
-        else if (pendingRef.current === 0) setSaveState((s) => (s === 'error' ? s : 'saved'));
+        else if (pendingRef.current === 0 && failedRef.current.length === 0) setSaveState('saved');
       });
       return queueRef.current;
     },
     [id],
   );
+
+  // Re-send anything recovered from the device backup, then keep retrying failed saves.
+  useEffect(() => {
+    if (!inProgress) return undefined;
+    const recovered = recoverRef.current;
+    recoverRef.current = [];
+    recovered.forEach((ev) => send(ev));
+    const timer = setInterval(() => {
+      if (!failedRef.current.length || pendingRef.current) return;
+      const retry = failedRef.current;
+      failedRef.current = [];
+      retry.forEach((ev) => send(ev));
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [inProgress, send]);
+
+  // On-device backup of answers and flags.
+  useEffect(() => {
+    if (inProgress && username) writeBackup(id, username, { startedAt: data.attempt.startedAt, answers, flags });
+  }, [answers, flags, inProgress, id, username, data]);
 
   // Audit: language switches during the exam.
   useEffect(() => {
@@ -223,8 +298,10 @@ export default function Exam() {
     setBusy(true);
     setError('');
     try {
-      await queueRef.current; // make sure every answer is saved first
-      await api(`/exam/${id}/submit`, { method: 'POST', body: {} });
+      await queueRef.current; // let pending saves finish first
+      // Send every answer on screen too: the server recovers any that never saved.
+      await api(`/exam/${id}/submit`, { method: 'POST', body: { answers, flags } });
+      writeBackup(id, username, null);
       navigate(`/exam/${id}/thank-you`, { replace: true });
     } catch {
       setError(t('somethingWrong'));
