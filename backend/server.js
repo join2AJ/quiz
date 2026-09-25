@@ -5,6 +5,7 @@ const express = require('express');
 const cookieSession = require('cookie-session');
 const config = require('./config');
 const store = require('./services/store');
+const audit = require('./services/auditService');
 const authCheck = require('./middleware/authCheck');
 const roleCheck = require('./middleware/roleCheck');
 
@@ -35,6 +36,27 @@ app.use(
     maxAge: 12 * 60 * 60 * 1000,
   }),
 );
+// Idle timeout: a session unused for SESSION_IDLE_MINUTES (default 120) ends.
+// Answers are auto-saved, so nothing is lost; the event is audited.
+const IDLE_MS = (Number(process.env.SESSION_IDLE_MINUTES) || 120) * 60 * 1000;
+app.use(async (req, res, next) => {
+  const s = req.session;
+  if (!s || !s.user) return next();
+  const now = Date.now();
+  if (s.lastSeen && now - s.lastSeen > IDLE_MS) {
+    await audit.log(req, 'SESSION_TIMEOUT', {
+      username: s.user.username,
+      exam_id_if_active: s.activeExam || null,
+      answers_saved_flag: true,
+    });
+    req.session = null;
+    return req.path.startsWith('/api/') && req.path !== '/api/auth/login' ? res.status(401).json({ error: 'Session expired' }) : next();
+  }
+  // Refresh at most once a minute so the cookie is not rewritten on every request.
+  if (!s.lastSeen || now - s.lastSeen > 60 * 1000) s.lastSeen = now;
+  return next();
+});
+
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');

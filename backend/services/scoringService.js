@@ -1,8 +1,16 @@
 /**
- * Server-side scoring, remarks and analytics. The answer key is only ever read
- * here — nothing in this file returns correct options to a participant.
+ * Server-side scoring, remarks and analytics. The answer key (and the
+ * behaviour interpretation / reveal map) is only ever read here and in admin
+ * routes — nothing in this file returns it to a participant.
+ *
+ * Scoring model (per question, weight w, default 1):
+ *   full-credit option (correct / preferred)  -> w points
+ *   partial-credit option (acceptable)         -> w × partialCreditPct%
+ *   concern / neutral / other / unanswered     -> 0
+ * Section, Knowledge, Behaviour, dimension and total % = points ÷ max points.
  */
 const { computeTimings, formatDuration } = require('./timerService');
+const rules = require('./ruleEngine');
 
 const TIMEZONE = process.env.TIMEZONE || 'Asia/Kolkata';
 
@@ -41,12 +49,66 @@ const REMARKS = {
   },
 };
 
-function pct(correct, total) {
-  return total ? Math.round((correct / total) * 1000) / 10 : 0;
+const KIND_LABEL = {
+  correct: 'Correct / Preferred',
+  acceptable: 'Acceptable (partial)',
+  concern: 'Concern',
+  neutral: 'Neutral',
+  incorrect: 'Incorrect',
+  unanswered: 'Unanswered',
+};
+
+const round1 = (n) => Math.round(n * 10) / 10;
+
+function pct(earned, max) {
+  return max ? round1((earned / max) * 100) : 0;
 }
 
-/** Remark keys (in display order) for the given percentages and thresholds. */
-function remarkKeys(totalPct, knowledgePct, behaviourPct, th) {
+function prettyKey(key) {
+  return String(key || '')
+    .split('_')
+    .filter(Boolean)
+    .map((w) => w[0].toUpperCase() + w.slice(1))
+    .join(' ');
+}
+
+function dimensionLabel(exam, key) {
+  const d = ((exam && exam.config && exam.config.dimensions) || {})[key] || {};
+  return { label: d.label || prettyKey(key), labelHi: d.labelHi || '' };
+}
+
+function partialFraction(exam) {
+  const p = Number(exam && exam.config && exam.config.partialCreditPct);
+  return Number.isFinite(p) ? Math.min(100, Math.max(0, p)) / 100 : 0.5;
+}
+
+/** How an answer scores: { credit 0..1, kind }. */
+function creditFor(q, answer, partial) {
+  if (!answer) return { credit: 0, kind: 'unanswered' };
+  const full = q.fullCredit && q.fullCredit.length ? q.fullCredit : [q.correct];
+  if (full.includes(answer)) return { credit: 1, kind: 'correct' };
+  if ((q.partial || []).includes(answer)) return { credit: partial, kind: 'acceptable' };
+  if ((q.concern || []).includes(answer)) return { credit: 0, kind: 'concern' };
+  if ((q.neutral || []).includes(answer)) return { credit: 0, kind: 'neutral' };
+  return { credit: 0, kind: 'incorrect' };
+}
+
+// ---------------------------------------------------------------- remarks
+
+/** Variables available to remark conditions. */
+const BASE_VARS = ['total_pct', 'knowledge_pct', 'behaviour_pct'];
+function isAllowedVar(v) {
+  return BASE_VARS.includes(v) || /^section_\d+_pct$/.test(v) || /^dim_[a-z0-9_]+_pct$/.test(v);
+}
+
+function remarkVars(r) {
+  const vars = { total_pct: r.totalPct, knowledge_pct: r.knowledgePct, behaviour_pct: r.behaviourPct };
+  for (const s of r.sections || []) vars[`section_${s.no}_pct`] = s.pct;
+  for (const d of r.dimensions || []) vars[`dim_${d.key}_pct`] = d.pct;
+  return vars;
+}
+
+function builtInRemarkKeys(totalPct, knowledgePct, behaviourPct, th) {
   if (totalPct >= th.excellent) return ['outstanding'];
   const keys = [];
   const hasK = knowledgePct !== null && knowledgePct !== undefined;
@@ -69,13 +131,44 @@ function remarkKeys(totalPct, knowledgePct, behaviourPct, th) {
   return keys;
 }
 
-function remarks(totalPct, knowledgePct, behaviourPct, th) {
-  return remarkKeys(totalPct, knowledgePct, behaviourPct, th).map((k) => ({ key: k, ...REMARKS[k] }));
+/**
+ * Remarks for a result. If the exam has custom remark rules they are
+ * evaluated in order and the first match wins; otherwise the built-in
+ * threshold logic is used.
+ */
+function remarksFor(r, exam) {
+  const custom = exam && exam.config && Array.isArray(exam.config.remarkRules) ? exam.config.remarkRules : [];
+  if (custom.length) {
+    const vars = remarkVars(r);
+    for (let i = 0; i < custom.length; i += 1) {
+      let hit = false;
+      try {
+        hit = rules.evaluate(custom[i].condition, vars);
+      } catch {
+        hit = false;
+      }
+      if (hit) return [{ key: `rule-${i + 1}`, en: custom[i].en || '', hi: custom[i].hi || '' }];
+    }
+    return [];
+  }
+  return builtInRemarkKeys(r.totalPct, r.knowledgePct, r.behaviourPct, exam.thresholds).map((k) => ({ key: k, ...REMARKS[k] }));
 }
 
 function remarksText(list) {
   return list.map((r) => r.en).join(' ');
 }
+
+/** Validate custom remark rules; returns an error message or null. */
+function validateRemarkRules(list) {
+  for (const [i, r] of list.entries()) {
+    const err = rules.validate(r.condition, isAllowedVar);
+    if (err) return `Remark rule ${i + 1} ("${r.condition}"): ${err}`;
+    if (!String(r.en || '').trim()) return `Remark rule ${i + 1} needs an English remark`;
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------- formatting
 
 function formatDateTime(value) {
   const d = new Date(value);
@@ -91,77 +184,137 @@ function unlockDate(submittedAt, days) {
   return new Date(new Date(submittedAt).getTime() + Number(days || 0) * 86400000).toISOString();
 }
 
+// ---------------------------------------------------------------- scoring
+
+function tally() {
+  return { earned: 0, max: 0, correct: 0, count: 0 };
+}
+
 /**
  * Score a finished attempt.
  * @returns {{ result, summaryRow, responseRows }}
  */
 function scoreAttempt({ exam, bank, user, attempt }) {
   const timings = computeTimings(bank, attempt.state, attempt.startedAt, attempt.submittedAt);
-  const typeTally = {};
-  const sectionTally = new Map(bank.sections.map((s) => [s.no, { correct: 0, total: 0 }]));
-  let correct = 0;
+  const partial = partialFraction(exam);
+  const overall = tally();
+  const bySection = new Map(bank.sections.map((s) => [s.no, tally()]));
+  const byType = {};
+  const byDim = new Map();
   let answered = 0;
   let flagged = 0;
+  let concerns = 0;
+  let changes = 0;
   const responseRows = [];
 
   for (const q of bank.questions) {
     const t = timings.perQuestion.get(q.no);
-    const isCorrect = !!t.answer && t.answer === q.correct;
+    const w = Number(q.weight) > 0 ? Number(q.weight) : 1;
+    const { credit, kind } = creditFor(q, t.answer, partial);
+    const points = credit * w;
     if (t.answer) answered += 1;
     if (t.flagged) flagged += 1;
-    if (isCorrect) correct += 1;
-    const sec = sectionTally.get(q.sectionNo) || { correct: 0, total: 0 };
-    sec.total += 1;
-    if (isCorrect) sec.correct += 1;
-    sectionTally.set(q.sectionNo, sec);
-    if (q.type) {
-      typeTally[q.type] = typeTally[q.type] || { correct: 0, total: 0 };
-      typeTally[q.type].total += 1;
-      if (isCorrect) typeTally[q.type].correct += 1;
+    if (kind === 'concern') concerns += 1;
+    changes += t.changes;
+    const add = (tl) => {
+      tl.earned += points;
+      tl.max += w;
+      tl.count += 1;
+      if (credit === 1) tl.correct += 1;
+    };
+    add(overall);
+    if (!bySection.has(q.sectionNo)) bySection.set(q.sectionNo, tally());
+    add(bySection.get(q.sectionNo));
+    if (q.type) add((byType[q.type] = byType[q.type] || tally()));
+    if (q.dimension) {
+      if (!byDim.has(q.dimension)) byDim.set(q.dimension, { ...tally(), type: q.type });
+      add(byDim.get(q.dimension));
     }
     const section = bank.sections.find((s) => s.no === q.sectionNo);
     responseRows.push({
       'Participant Name': user.name,
       Username: user.username,
       'Question No': q.no,
+      QID: q.qid,
       Section: section ? `Section ${section.no} — ${section.name}` : `Section ${q.sectionNo}`,
       Type: q.type,
       Category: q.category,
+      Dimension: q.dimension || '',
       'Question Text (EN)': q.textEn,
       'Option Selected': t.answer || '—',
       'Time on Question (seconds)': t.seconds,
       'Active Time on Question (seconds)': t.activeSeconds,
       'Times Changed': t.changes,
       'Flagged Y/N': t.flagged ? 'Y' : 'N',
-      'Correct Y/N': isCorrect ? 'Y' : 'N',
+      'Correct Y/N': credit === 1 ? 'Y' : 'N',
+      Credit: round1(credit * 100) / 100,
+      Weight: w,
+      Points: round1(points),
+      'Response Type': KIND_LABEL[kind],
+      Interpretation: t.answer ? (q.revealMap || {})[t.answer] || '' : '',
     });
   }
 
-  const total = bank.questions.length;
-  const totalPct = pct(correct, total);
   const sectionsResult = bank.sections.map((s) => {
-    const tally = sectionTally.get(s.no) || { correct: 0, total: 0 };
+    const tl = bySection.get(s.no) || tally();
     return {
       no: s.no,
       name: s.name,
       nameHi: s.nameHi,
-      correct: tally.correct,
-      total: tally.total,
-      pct: pct(tally.correct, tally.total),
+      correct: round1(tl.earned),
+      total: tl.max,
+      pct: pct(tl.earned, tl.max),
       seconds: timings.perSection.get(s.no) || 0,
     };
   });
-  // Knowledge / Behaviour split uses the question type tag; fall back to
-  // section 1 / section 2 if the tags were not filled in.
-  const byType = (type, fallbackIdx) => {
-    if (typeTally[type]) return pct(typeTally[type].correct, typeTally[type].total);
+  // Knowledge / Behaviour use the question type tag; fall back to sections 1 / 2.
+  const typePct = (type, fallbackIdx) => {
+    if (byType[type]) return pct(byType[type].earned, byType[type].max);
     const s = sectionsResult[fallbackIdx];
     return s && s.total ? s.pct : null;
   };
-  const knowledgePct = byType('KNOWLEDGE', 0);
-  const behaviourPct = byType('BEHAVIOUR', 1);
+  const knowledgePct = typePct('KNOWLEDGE', 0);
+  const behaviourPct = typePct('BEHAVIOUR', 1);
+  const dimensions = [...byDim.entries()].map(([key, tl]) => ({
+    key,
+    ...dimensionLabel(exam, key),
+    group: tl.type || '',
+    pct: pct(tl.earned, tl.max),
+    earned: round1(tl.earned),
+    max: tl.max,
+  }));
+  const totalPct = pct(overall.earned, overall.max);
   const unlockAt = unlockDate(attempt.submittedAt, exam.unlockDays);
-  const remarkList = remarks(totalPct, knowledgePct, behaviourPct, exam.thresholds);
+  const st = attempt.state || {};
+  const integrity = {
+    tabSwitches: st.tabHidden || 0,
+    hiddenSeconds: Math.round((st.hiddenMs || 0) / 1000),
+    languageToggles: st.langToggles || 0,
+    answerChanges: changes,
+  };
+
+  const result = {
+    name: user.name,
+    nameHi: user.nameHi || '',
+    correct: round1(overall.earned),
+    total: overall.max,
+    correctCount: overall.correct,
+    questionCount: bank.questions.length,
+    totalPct,
+    answered,
+    flagged,
+    sections: sectionsResult,
+    knowledgePct,
+    behaviourPct,
+    dimensions,
+    concernCount: concerns,
+    integrity,
+    totalSeconds: timings.totalSeconds,
+    startedAt: attempt.startedAt,
+    submittedAt: attempt.submittedAt,
+    unlockAt,
+  };
+  const remarkList = remarksFor(result, exam);
 
   const summaryRow = {
     Name: user.name,
@@ -175,9 +328,9 @@ function scoreAttempt({ exam, bank, user, attempt }) {
   };
   for (const s of sectionsResult) summaryRow[`Section ${s.no} Time`] = formatDuration(s.seconds);
   Object.assign(summaryRow, {
-    'Total Questions': total,
+    'Total Questions': bank.questions.length,
     Answered: answered,
-    Unanswered: total - answered,
+    Unanswered: bank.questions.length - answered,
     Flagged: flagged,
   });
   for (const s of sectionsResult) summaryRow[`Section ${s.no} Score %`] = s.pct;
@@ -186,86 +339,167 @@ function scoreAttempt({ exam, bank, user, attempt }) {
     Remarks: remarksText(remarkList),
     'Result Unlock Date': formatDate(unlockAt),
     'Submitted On': formatDateTime(attempt.submittedAt),
-    'Correct Answers': correct,
+    'Correct Answers': overall.correct,
+    Points: round1(overall.earned),
+    'Max Points': overall.max,
     'Knowledge %': knowledgePct ?? '',
     'Behaviour %': behaviourPct ?? '',
+  });
+  for (const d of dimensions) summaryRow[`${d.label} %`] = d.pct;
+  Object.assign(summaryRow, {
+    'Concern Answers': concerns,
+    'Answer Changes': integrity.answerChanges,
+    'Tab Switches': integrity.tabSwitches,
+    'Time Away From Exam Tab': formatDuration(integrity.hiddenSeconds),
+    'Language Toggles': integrity.languageToggles,
     'Time on Flagged Questions': formatDuration(timings.flaggedSeconds),
+    Designation: user.designation || '',
+    Post: user.post || '',
+    Shift: user.shift || '',
     'Total Seconds': timings.totalSeconds,
+    'Dimension Scores': JSON.stringify(Object.fromEntries(dimensions.map((d) => [d.key, d.pct]))),
   });
 
-  const result = {
-    name: user.name,
-    correct,
-    total,
-    totalPct,
-    answered,
-    flagged,
-    sections: sectionsResult,
-    knowledgePct,
-    behaviourPct,
-    totalSeconds: timings.totalSeconds,
-    startedAt: attempt.startedAt,
-    submittedAt: attempt.submittedAt,
-    unlockAt,
-  };
   return { result, summaryRow, responseRows };
 }
 
-/** Recompute the Remarks column after thresholds change. */
-function refreshRemarks(summaryRows, thresholds) {
+/** Recompute the Remarks column (after thresholds / remark rules change). */
+function refreshRemarks(summaryRows, exam) {
   return summaryRows.map((r) => {
-    const k = r['Knowledge %'] === '' ? null : Number(r['Knowledge %']);
-    const b = r['Behaviour %'] === '' ? null : Number(r['Behaviour %']);
-    return { ...r, Remarks: remarksText(remarks(Number(r['Total Score %']) || 0, k, b, thresholds)) };
+    const num = (v) => (v === '' || v === undefined || v === null ? null : Number(v));
+    const sections = Object.keys(r)
+      .map((k) => /^Section (\d+) Score %$/.exec(k))
+      .filter(Boolean)
+      .map((m) => ({ no: Number(m[1]), pct: num(r[m[0]]) }));
+    let dims = {};
+    try {
+      dims = JSON.parse(r['Dimension Scores'] || '{}');
+    } catch {
+      dims = {};
+    }
+    const res = {
+      totalPct: num(r['Total Score %']) || 0,
+      knowledgePct: num(r['Knowledge %']),
+      behaviourPct: num(r['Behaviour %']),
+      sections,
+      dimensions: Object.entries(dims).map(([key, p]) => ({ key, pct: p })),
+    };
+    return { ...r, Remarks: remarksText(remarksFor(res, exam)) };
   });
 }
 
 // ---------------------------------------------------------------- analytics
 
 function avg(list) {
-  return list.length ? Math.round((list.reduce((a, b) => a + b, 0) / list.length) * 10) / 10 : 0;
+  return list.length ? round1(list.reduce((a, b) => a + b, 0) / list.length) : 0;
 }
 
-function computeAnalytics(summary, responses) {
+function computeAnalytics(summary, responses, bank, exam) {
+  const qByNo = new Map(((bank && bank.questions) || []).map((q) => [q.no, q]));
   const perQuestion = new Map();
+  const concerns = [];
+  const dimTotals = new Map();
   for (const r of responses) {
     const no = Number(r['Question No']);
     if (!perQuestion.has(no)) {
       perQuestion.set(no, {
         no,
+        qid: r.QID || '',
         section: r.Section,
+        type: r.Type,
         category: r.Category,
+        dimension: r.Dimension || '',
         text: r['Question Text (EN)'],
         attempts: 0,
-        answered: 0,
+        credits: [],
         correct: 0,
         flagged: 0,
         times: [],
         changes: [],
+        options: { A: 0, B: 0, C: 0, D: 0, '—': 0 },
       });
     }
     const q = perQuestion.get(no);
     q.attempts += 1;
-    if (r['Option Selected'] && r['Option Selected'] !== '—') q.answered += 1;
+    const credit = r.Credit !== undefined && r.Credit !== '' ? Number(r.Credit) : r['Correct Y/N'] === 'Y' ? 1 : 0;
+    q.credits.push(credit);
     if (r['Correct Y/N'] === 'Y') q.correct += 1;
     if (r['Flagged Y/N'] === 'Y') q.flagged += 1;
     q.times.push(Number(r['Active Time on Question (seconds)'] ?? r['Time on Question (seconds)']) || 0);
     q.changes.push(Number(r['Times Changed']) || 0);
+    const opt = r['Option Selected'] || '—';
+    q.options[opt] = (q.options[opt] || 0) + 1;
+    if (r['Response Type'] === KIND_LABEL.concern) {
+      concerns.push({
+        name: r['Participant Name'],
+        username: r.Username,
+        no,
+        qid: r.QID || '',
+        category: r.Category,
+        option: opt,
+        interpretation: r.Interpretation || '',
+      });
+    }
+    if (r.Dimension) {
+      const w = Number(r.Weight) || 1;
+      const d = dimTotals.get(r.Dimension) || { earned: 0, max: 0, type: r.Type };
+      d.earned += credit * w;
+      d.max += w;
+      dimTotals.set(r.Dimension, d);
+    }
   }
+
   const questions = [...perQuestion.values()]
     .sort((a, b) => a.no - b.no)
     .map((q) => ({
       no: q.no,
+      qid: q.qid,
       section: q.section,
+      type: q.type,
       category: q.category,
+      dimension: q.dimension,
       text: q.text,
       attempts: q.attempts,
       correct: q.correct,
-      accuracy: pct(q.correct, q.attempts),
+      accuracy: round1(avg(q.credits) * 100),
       flagged: q.flagged,
       avgTime: avg(q.times),
       avgChanges: avg(q.changes),
+      options: q.options,
     }));
+
+  // Behaviour response distribution with the admin-only interpretation of each option.
+  const behaviour = questions
+    .filter((q) => {
+      const bq = qByNo.get(q.no);
+      return (bq && Object.keys(bq.revealMap || {}).length) || q.type === 'BEHAVIOUR';
+    })
+    .map((q) => {
+      const bq = qByNo.get(q.no) || {};
+      const partial = partialFraction(exam);
+      return {
+        no: q.no,
+        qid: q.qid,
+        category: q.category,
+        dimension: q.dimension,
+        text: q.text,
+        attempts: q.attempts,
+        options: ['A', 'B', 'C', 'D'].map((o) => ({
+          option: o,
+          count: q.options[o] || 0,
+          kind: bq.correct ? creditFor(bq, o, partial).kind : '',
+          interpretation: (bq.revealMap || {})[o] || '',
+        })),
+        unanswered: q.options['—'] || 0,
+      };
+    });
+
+  const dimensions = [...dimTotals.entries()].map(([key, d]) => ({
+    key,
+    ...dimensionLabel(exam, key),
+    group: d.type || '',
+    average: pct(d.earned, d.max),
+  }));
 
   const sectionKeys = Object.keys(summary[0] || {}).filter((k) => /^Section \d+ Score %$/.test(k));
   const sectionNames = new Map();
@@ -299,6 +533,18 @@ function computeAnalytics(summary, responses) {
       totalSeconds: Number(r['Total Seconds']) || 0,
     }));
 
+  const integrity = summary
+    .map((r) => ({
+      name: r.Name,
+      username: r.Username,
+      tabSwitches: Number(r['Tab Switches']) || 0,
+      timeAway: r['Time Away From Exam Tab'] || '00:00:00',
+      answerChanges: Number(r['Answer Changes']) || 0,
+      languageToggles: Number(r['Language Toggles']) || 0,
+      concerns: Number(r['Concern Answers']) || 0,
+    }))
+    .sort((a, b) => b.tabSwitches - a.tabSwitches || b.concerns - a.concerns);
+
   const buckets = ['0-9', '10-19', '20-29', '30-39', '40-49', '50-59', '60-69', '70-79', '80-89', '90-100'].map(
     (label) => ({ label, count: 0 }),
   );
@@ -322,6 +568,10 @@ function computeAnalytics(summary, responses) {
     mostFlagged: [...questions].filter((q) => q.flagged).sort((a, b) => b.flagged - a.flagged).slice(0, 10),
     hardest: [...questions].sort((a, b) => a.accuracy - b.accuracy).slice(0, 10),
     sections,
+    dimensions,
+    behaviour,
+    concerns,
+    integrity,
     ranking,
     scoreDistribution: buckets,
     timeDistribution: timeBuckets,
@@ -329,8 +579,8 @@ function computeAnalytics(summary, responses) {
 }
 
 /** Array-of-arrays layout for the "Analytics" sheet. */
-function buildAnalyticsSheet(summary, responses) {
-  const a = computeAnalytics(summary, responses);
+function buildAnalyticsSheet(summary, responses, bank, exam) {
+  const a = computeAnalytics(summary, responses, bank, exam);
   const aoa = [
     ['Analytics', `Generated ${formatDateTime(new Date())}`],
     ['Participants', a.participants],
@@ -338,8 +588,8 @@ function buildAnalyticsSheet(summary, responses) {
     ['Average Total Time', formatDuration(a.averageSeconds)],
     [],
     ['QUESTION-WISE PERFORMANCE'],
-    ['Question No', 'Section', 'Category', 'Attempts', 'Correct', 'Average Score %', 'Times Flagged', 'Avg Time (s)', 'Avg Changes'],
-    ...a.questions.map((q) => [q.no, q.section, q.category, q.attempts, q.correct, q.accuracy, q.flagged, q.avgTime, q.avgChanges]),
+    ['Question No', 'QID', 'Section', 'Category', 'Dimension', 'Attempts', 'Full Credit', 'Average Score %', 'Times Flagged', 'Avg Time (s)', 'Avg Changes'],
+    ...a.questions.map((q) => [q.no, q.qid, q.section, q.category, q.dimension, q.attempts, q.correct, q.accuracy, q.flagged, q.avgTime, q.avgChanges]),
     [],
     ['MOST FLAGGED QUESTIONS'],
     ['Question No', 'Times Flagged', 'Category', 'Question Text (EN)'],
@@ -352,18 +602,40 @@ function buildAnalyticsSheet(summary, responses) {
     ['SECTION-WISE PERFORMANCE'],
     ['Section', 'Average %', 'Highest %', 'Lowest %'],
     ...a.sections.map((s) => [s.name, s.average, s.highest, s.lowest]),
+  ];
+  if (a.dimensions.length) {
+    aoa.push([], ['DIMENSION-WISE PERFORMANCE'], ['Dimension', 'Group', 'Average %'], ...a.dimensions.map((d) => [d.label, d.group, d.average]));
+  }
+  if (a.behaviour.length) {
+    aoa.push([], ['BEHAVIOUR RESPONSE DISTRIBUTION (admin only)'], ['Question No', 'QID', 'Option', 'Count', 'Scored As', 'Interpretation']);
+    for (const q of a.behaviour) {
+      for (const o of q.options) aoa.push([q.no, q.qid, o.option, o.count, KIND_LABEL[o.kind] || '', o.interpretation]);
+    }
+  }
+  aoa.push(
+    [],
+    ['CONCERN ANSWERS'],
+    ['Participant', 'Username', 'Question No', 'QID', 'Option', 'Interpretation'],
+    ...(a.concerns.length ? a.concerns.map((c) => [c.name, c.username, c.no, c.qid, c.option, c.interpretation]) : [['—', 'None']]),
+    [],
+    ['INTEGRITY SIGNALS'],
+    ['Participant', 'Username', 'Tab Switches', 'Time Away', 'Answer Changes', 'Language Toggles', 'Concern Answers'],
+    ...a.integrity.map((r) => [r.name, r.username, r.tabSwitches, r.timeAway, r.answerChanges, r.languageToggles, r.concerns]),
     [],
     ['PARTICIPANT RANK'],
     ['Rank', 'Name', 'Username', 'Total Score %', 'Total Time'],
     ...a.ranking.map((r) => [r.rank, r.name, r.username, r.totalPct, r.totalTime]),
-  ];
+  );
   return aoa;
 }
 
 module.exports = {
   REMARKS,
-  remarks,
-  remarkKeys,
+  KIND_LABEL,
+  creditFor,
+  remarksFor,
+  validateRemarkRules,
+  isAllowedVar,
   scoreAttempt,
   refreshRemarks,
   computeAnalytics,

@@ -22,8 +22,11 @@ export default function ExamList() {
       {exams && exams.length === 0 && (
         <div className="card">
           <h2>No exams yet</h2>
-          <p className="muted">Create your first exam, then add participants to it.</p>
-          <Link className="btn btn-primary" to="/admin/exams/new">Create exam</Link>
+          <p className="muted">Import your question database (questions, staff logins and scoring in one step), or create an exam by hand.</p>
+          <div className="row-actions">
+            <Link className="btn btn-primary" to="/admin/import">Import database JSON</Link>
+            <Link className="btn btn-secondary" to="/admin/exams/new">Create exam manually</Link>
+          </div>
         </div>
       )}
       {exams && exams.length > 0 && (

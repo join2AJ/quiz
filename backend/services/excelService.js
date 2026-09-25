@@ -21,13 +21,25 @@ const SHEETS = {
 const OPTIONS = ['A', 'B', 'C', 'D'];
 const SECTION_HEADERS = ['Section No', 'Name', 'Name (HI)', 'Description', 'Description (HI)'];
 const QUESTION_HEADERS = [
-  'Question No', 'QID', 'Section No', 'Type', 'Category', 'Question (EN)', 'Question (HI)',
-  'A (EN)', 'A (HI)', 'B (EN)', 'B (HI)', 'C (EN)', 'C (HI)', 'D (EN)', 'D (HI)',
+  'Question No', 'QID', 'Section No', 'Type', 'Category', 'Difficulty', 'Question (EN)', 'Question (HI)',
+  'Scenario (EN)', 'Scenario (HI)', 'A (EN)', 'A (HI)', 'B (EN)', 'B (HI)', 'C (EN)', 'C (HI)', 'D (EN)', 'D (HI)',
 ];
-const ANSWER_KEY_HEADERS = ['Question No', 'Correct Option', 'Category', 'Explanation'];
+// First four columns are the ones the spec asks for; the rest carry the
+// scoring model (partial credit, dimensions, behaviour interpretation).
+const ANSWER_KEY_HEADERS = [
+  'Question No', 'Correct Option', 'Category', 'Explanation', 'QID', 'Full Credit Options', 'Partial Credit Options',
+  'Concern Options', 'Neutral Options', 'Dimension', 'Weight', 'Difficulty', 'Tags', 'Explanation (HI)',
+  'Reveal A', 'Reveal B', 'Reveal C', 'Reveal D',
+];
 
 function str(v) {
   return v === undefined || v === null ? '' : String(v);
+}
+
+/** "A, D" / ["A","D"] -> ["A","D"] (valid letters only, no duplicates). */
+function letters(v) {
+  const list = Array.isArray(v) ? v : str(v).split(/[^A-Za-z]+/);
+  return [...new Set(list.map((x) => str(x).trim().toUpperCase()).filter((x) => OPTIONS.includes(x)))];
 }
 
 function normalizeUsername(u) {
@@ -122,8 +134,11 @@ function questionRows(questions) {
       'Section No': q.sectionNo,
       Type: q.type,
       Category: q.category || '',
+      Difficulty: q.difficulty || '',
       'Question (EN)': q.textEn || '',
       'Question (HI)': q.textHi || '',
+      'Scenario (EN)': q.scenarioEn || '',
+      'Scenario (HI)': q.scenarioHi || '',
     };
     OPTIONS.forEach((o, i) => {
       const opt = q.options[i] || {};
@@ -135,12 +150,65 @@ function questionRows(questions) {
 }
 
 function answerKeyRows(questions) {
-  return questions.map((q) => ({
-    'Question No': q.no,
-    'Correct Option': q.correct,
-    Category: q.category || '',
-    Explanation: q.explanation || '',
-  }));
+  return questions.map((q) => {
+    const row = {
+      'Question No': q.no,
+      'Correct Option': q.correct,
+      Category: q.category || '',
+      Explanation: q.explanation || '',
+      QID: q.qid,
+      'Full Credit Options': (q.fullCredit || []).join(', '),
+      'Partial Credit Options': (q.partial || []).join(', '),
+      'Concern Options': (q.concern || []).join(', '),
+      'Neutral Options': (q.neutral || []).join(', '),
+      Dimension: q.dimension || '',
+      Weight: q.weight || 1,
+      Difficulty: q.difficulty || '',
+      Tags: (q.tags || []).join(', '),
+      'Explanation (HI)': q.explanationHi || '',
+    };
+    for (const o of OPTIONS) row[`Reveal ${o}`] = (q.revealMap || {})[o] || '';
+    return row;
+  });
+}
+
+/** Inverse of answerKeyRows for one row: the scoring metadata. */
+function keyMetaFromRow(r) {
+  const revealMap = {};
+  for (const o of OPTIONS) if (str(r[`Reveal ${o}`])) revealMap[o] = str(r[`Reveal ${o}`]);
+  return {
+    fullCredit: letters(r['Full Credit Options']),
+    partial: letters(r['Partial Credit Options']),
+    concern: letters(r['Concern Options']),
+    neutral: letters(r['Neutral Options']),
+    dimension: str(r.Dimension),
+    weight: Number(r.Weight) > 0 ? Number(r.Weight) : 1,
+    difficulty: str(r.Difficulty),
+    tags: str(r.Tags) ? str(r.Tags).split(/\s*,\s*/).filter(Boolean) : [],
+    explanationHi: str(r['Explanation (HI)']),
+    revealMap,
+  };
+}
+
+/** Normalise the scoring metadata of one question (from the editor, an import or storage). */
+function questionMeta(q) {
+  const correct = str(q.correct).trim().toUpperCase();
+  let fullCredit = letters(q.fullCredit);
+  if (correct && !fullCredit.includes(correct)) fullCredit = [correct, ...fullCredit];
+  const revealMap = {};
+  for (const o of OPTIONS) if (q.revealMap && str(q.revealMap[o]).trim()) revealMap[o] = str(q.revealMap[o]).trim();
+  return {
+    fullCredit,
+    partial: letters(q.partial).filter((l) => !fullCredit.includes(l)),
+    concern: letters(q.concern).filter((l) => !fullCredit.includes(l)),
+    neutral: letters(q.neutral).filter((l) => !fullCredit.includes(l)),
+    dimension: str(q.dimension).trim(),
+    weight: Number(q.weight) > 0 ? Math.min(100, Number(q.weight)) : 1,
+    difficulty: str(q.difficulty).trim(),
+    tags: (Array.isArray(q.tags) ? q.tags : str(q.tags).split(',')).map((t) => str(t).trim()).filter(Boolean),
+    explanationHi: str(q.explanationHi),
+    revealMap,
+  };
 }
 
 /**
@@ -170,12 +238,15 @@ function numberBank(sections) {
         category: q.category || '',
         textEn: q.textEn || '',
         textHi: q.textHi || '',
+        scenarioEn: q.scenarioEn || '',
+        scenarioHi: q.scenarioHi || '',
         options: OPTIONS.map((_, oi) => {
           const o = (q.options || [])[oi] || {};
           return { key: OPTIONS[oi], en: o.en || '', hi: o.hi || '' };
         }),
         correct: str(q.correct).toUpperCase(),
         explanation: q.explanation || '',
+        ...questionMeta(q),
       });
     }
   });
@@ -183,7 +254,7 @@ function numberBank(sections) {
 }
 
 /** Results workbook for download: the four report sheets + the question bank. */
-function buildResultsWorkbook({ summary, responses, bank, analyticsAoa }) {
+function buildResultsWorkbook({ summary, responses, bank, analyticsAoa, auditRows }) {
   const wb = newWorkbook();
   setSheet(wb, SHEETS.summary, summary, unionKeys(summary));
   setSheet(wb, SHEETS.responses, responses, unionKeys(responses));
@@ -191,6 +262,14 @@ function buildResultsWorkbook({ summary, responses, bank, analyticsAoa }) {
   setSheetAoa(wb, SHEETS.analytics, analyticsAoa);
   setSheet(wb, SHEETS.sections, sectionRows(bank.sections), SECTION_HEADERS);
   setSheet(wb, SHEETS.questions, questionRows(bank.questions), QUESTION_HEADERS);
+  if (auditRows) setSheet(wb, 'Audit_Log', auditRows, unionKeys(auditRows));
+  return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx', compression: true });
+}
+
+/** Simple workbook from [{ name, rows }] (objects) — used for the audit export. */
+function buildSheetsWorkbook(sheets) {
+  const wb = newWorkbook();
+  for (const { name, rows: data } of sheets) setSheet(wb, name, data, unionKeys(data).length ? unionKeys(data) : ['(empty)']);
   return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx', compression: true });
 }
 
@@ -208,6 +287,9 @@ module.exports = {
   QUESTION_HEADERS,
   ANSWER_KEY_HEADERS,
   str,
+  letters,
+  keyMetaFromRow,
+  questionMeta,
   normalizeUsername,
   examFileBase,
   readWorkbook,
@@ -223,5 +305,6 @@ module.exports = {
   answerKeyRows,
   numberBank,
   buildResultsWorkbook,
+  buildSheetsWorkbook,
   parseCsv,
 };

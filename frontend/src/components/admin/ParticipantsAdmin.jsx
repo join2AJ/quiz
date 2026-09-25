@@ -51,13 +51,14 @@ export default function ParticipantsAdmin() {
         <div className="table-wrap">
           <table className="table">
             <thead>
-              <tr><th>Name</th><th>Username</th><th>Assigned exams</th><th>Assign to exam</th><th /></tr>
+              <tr><th>Name</th><th>Username</th><th className="hide-sm">Designation / Shift</th><th>Assigned exams</th><th>Assign to exam</th><th /></tr>
             </thead>
             <tbody>
               {shown.map((u) => (
                 <tr key={u.username}>
                   <td>{u.name}</td>
                   <td className="mono">{u.username}</td>
+                  <td className="small hide-sm">{[u.designation, u.shift].filter(Boolean).join(' · ')}</td>
                   <td className="small">{u.examIds.length ? u.examIds.map(examTitle).join(', ') : <span className="muted">none</span>}</td>
                   <td className="nowrap">
                     <select value={assignTo[u.username] || ''} onChange={(e) => setAssignTo((a) => ({ ...a, [u.username]: e.target.value }))}>

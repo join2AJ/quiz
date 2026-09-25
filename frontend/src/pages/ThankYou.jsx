@@ -8,7 +8,7 @@ import Countdown from '../components/Countdown.jsx';
 export default function ThankYou() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { t } = useLang();
+  const { t, pick } = useLang();
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const [ready, setReady] = useState(false);
@@ -40,7 +40,7 @@ export default function ThankYou() {
       <TopBar />
       <main className="thankyou">
         <div className="thankyou-inner">
-          <p className="thankyou-name">{data.name}</p>
+          <p className="thankyou-name">{pick(data.name, data.nameHi)}</p>
           <h1>{t('thankYouTitle')}</h1>
           <div className="thankyou-sub">
             <p lang="en">{translateIn('en', 'resultAvailableOn', { date: formatDateIn('en', unlockAt) })}</p>

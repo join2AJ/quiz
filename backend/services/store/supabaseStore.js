@@ -8,7 +8,7 @@
  */
 const { createClient } = require('@supabase/supabase-js');
 const config = require('../../config');
-const { OPTIONS, normalizeUsername, examFileBase, numberBank } = require('../excelService');
+const { OPTIONS, normalizeUsername, examFileBase, numberBank, questionMeta } = require('../excelService');
 
 const PAGE = 1000; // PostgREST returns at most 1000 rows per request by default
 
@@ -47,7 +47,25 @@ async function insertChunks(table, rows) {
 
 // ---------------------------------------------------------------- users
 
-const userFromRow = (r) => ({ username: r.username, name: r.name, passwordHash: r.password_hash, createdAt: r.created_at });
+const userFromRow = (r) => ({
+  username: r.username,
+  name: r.name,
+  passwordHash: r.password_hash,
+  createdAt: r.created_at,
+  nameHi: r.name_hi || '',
+  designation: r.designation || '',
+  post: r.post || '',
+  shift: r.shift || '',
+  staffId: r.staff_id || '',
+});
+
+const PROFILE_COLUMNS = [
+  ['nameHi', 'name_hi'],
+  ['designation', 'designation'],
+  ['post', 'post'],
+  ['shift', 'shift'],
+  ['staffId', 'staff_id'],
+];
 
 async function getUsers() {
   return (await selectAll(() => db().from('psq_users').select('*').order('username'))).map(userFromRow);
@@ -66,14 +84,16 @@ async function upsertUsers(list) {
     const rows = check(await db().from('psq_users').select('*').in('username', names.slice(i, i + 200)));
     for (const r of rows) existing.set(r.username, r);
   }
-  const rows = list.map(({ username, name, passwordHash }) => {
-    const u = normalizeUsername(username);
-    const old = existing.get(u);
-    return {
+  const rows = list.map((user) => {
+    const u = normalizeUsername(user.username);
+    const old = existing.get(u) || {};
+    const row = {
       username: u,
-      name: name || (old && old.name) || '',
-      password_hash: passwordHash || (old && old.password_hash),
+      name: user.name || old.name || '',
+      password_hash: user.passwordHash || old.password_hash,
     };
+    for (const [k, col] of PROFILE_COLUMNS) row[col] = user[k] !== undefined ? user[k] : old[col] || '';
+    return row;
   });
   check(await db().from('psq_users').upsert(rows, { onConflict: 'username' }));
 }
@@ -99,6 +119,7 @@ function examFromRow(r) {
     fileName: r.file_name,
     thresholds: { ...config.defaultThresholds, ...(r.thresholds || {}) },
     createdAt: r.created_at,
+    config: r.config || {},
   };
 }
 
@@ -117,6 +138,7 @@ function examToRow(e) {
     file_name: e.fileName,
     thresholds: e.thresholds || {},
     created_at: e.createdAt,
+    config: e.config || {},
   };
 }
 
@@ -240,14 +262,18 @@ async function getQuestionBank(exam) {
         sectionNo: q.section_no,
         type: (q.type || '').toUpperCase(),
         category: q.category,
+        difficulty: q.difficulty || '',
         textEn: q.text_en,
         textHi: q.text_hi,
+        scenarioEn: q.scenario_en || '',
+        scenarioHi: q.scenario_hi || '',
         options: OPTIONS.map((o, i) => {
           const opt = (q.options || [])[i] || {};
           return { key: o, en: opt.en || '', hi: opt.hi || '' };
         }),
         correct: (k.correct || '').toUpperCase(),
         explanation: k.explanation || '',
+        ...questionMeta({ ...(k.meta || {}), correct: k.correct, difficulty: q.difficulty }),
       };
     }),
   };
@@ -278,14 +304,35 @@ async function saveQuestionBank(exam, sections) {
       section_no: q.sectionNo,
       type: q.type,
       category: q.category,
+      difficulty: q.difficulty || '',
       text_en: q.textEn,
       text_hi: q.textHi,
+      scenario_en: q.scenarioEn || '',
+      scenario_hi: q.scenarioHi || '',
       options: q.options.map((o) => ({ en: o.en, hi: o.hi })),
     })),
   );
   await insertChunks(
     'psq_answer_key',
-    bank.questions.map((q) => ({ exam_id: exam.id, no: q.no, correct: q.correct, category: q.category, explanation: q.explanation })),
+    bank.questions.map((q) => ({
+      exam_id: exam.id,
+      no: q.no,
+      correct: q.correct,
+      category: q.category,
+      explanation: q.explanation,
+      meta: {
+        fullCredit: q.fullCredit,
+        partial: q.partial,
+        concern: q.concern,
+        neutral: q.neutral,
+        dimension: q.dimension,
+        weight: q.weight,
+        difficulty: q.difficulty,
+        tags: q.tags,
+        explanationHi: q.explanationHi,
+        revealMap: q.revealMap,
+      },
+    })),
   );
 }
 
@@ -378,6 +425,30 @@ async function deleteAttempt(examId, username) {
   check(await db().from('psq_attempts').delete().eq('exam_id', examId).eq('username', normalizeUsername(username)));
 }
 
+// ---------------------------------------------------------------- audit log
+// seq, prev_hash and hash are set by the psq_audit_chain trigger (see schema.sql).
+
+async function appendAudit(entry) {
+  check(await db().from('psq_audit_log').insert(entry));
+}
+
+async function getAudit({ examId, username, event, limit, beforeSeq } = {}) {
+  const build = () => {
+    let q = db().from('psq_audit_log').select('*');
+    if (examId) q = q.eq('exam_id', examId);
+    if (username) q = q.eq('username', username);
+    if (event) q = q.eq('event', event);
+    if (beforeSeq) q = q.lt('seq', beforeSeq);
+    return q.order('seq', { ascending: false });
+  };
+  if (limit) return check(await build().limit(limit));
+  return selectAll(build);
+}
+
+async function getAuditChain() {
+  return selectAll(() => db().from('psq_audit_log').select('*').order('seq'));
+}
+
 async function init() {
   // Fails fast with a readable message if the schema has not been created.
   const { error } = await db().from('psq_settings').select('key').limit(1);
@@ -422,4 +493,7 @@ module.exports = {
   getAttempt,
   saveAttempt,
   deleteAttempt,
+  appendAudit,
+  getAudit,
+  getAuditChain,
 };

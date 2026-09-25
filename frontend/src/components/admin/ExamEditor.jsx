@@ -11,10 +11,44 @@ const emptyQuestion = (type = '') => ({
   category: '',
   textEn: '',
   textHi: '',
+  scenarioEn: '',
+  scenarioHi: '',
   options: OPTION_KEYS.map(() => ({ en: '', hi: '' })),
   correct: '',
+  fullCredit: [],
+  partial: [],
+  concern: [],
+  neutral: [],
+  revealMap: {},
+  dimension: '',
+  weight: 1,
+  difficulty: '',
+  tags: [],
   explanation: '',
+  explanationHi: '',
 });
+
+const DEFAULT_CONFIG = { partialCreditPct: 50, timerSeconds: {}, remarkRules: [], dimensions: {} };
+
+/** How one option scores, for the per-option select. */
+function optionKind(q, k) {
+  if (q.correct === k) return 'best';
+  if ((q.fullCredit || []).includes(k)) return 'full';
+  if ((q.partial || []).includes(k)) return 'partial';
+  if ((q.concern || []).includes(k)) return 'concern';
+  if ((q.neutral || []).includes(k)) return 'neutral';
+  return 'wrong';
+}
+
+function setOptionKind(q, k, kind) {
+  const without = (list) => (list || []).filter((x) => x !== k);
+  const next = { ...q, fullCredit: without(q.fullCredit), partial: without(q.partial), concern: without(q.concern), neutral: without(q.neutral) };
+  if (kind === 'full') next.fullCredit = [...next.fullCredit, k];
+  if (kind === 'partial') next.partial = [...next.partial, k];
+  if (kind === 'concern') next.concern = [...next.concern, k];
+  if (kind === 'neutral') next.neutral = [...next.neutral, k];
+  return next;
+}
 
 const emptySection = (n) => ({
   name: n === 1 ? 'Knowledge' : n === 2 ? 'Behaviour' : '',
@@ -71,10 +105,21 @@ function normalizeImported(item, defaultType) {
     options,
     correct: pickStr(item.correct, item.answer, item.correctOption).trim().toUpperCase().slice(0, 1),
     explanation: pickStr(item.explanation),
+    scenarioEn: pickStr(item.scenarioEn, item.scenario),
+    scenarioHi: pickStr(item.scenarioHi),
+    fullCredit: item.fullCredit || [],
+    partial: item.partial || [],
+    concern: item.concern || [],
+    neutral: item.neutral || [],
+    revealMap: item.revealMap || {},
+    dimension: pickStr(item.dimension),
+    weight: Number(item.weight) > 0 ? Number(item.weight) : 1,
+    explanationHi: pickStr(item.explanationHi),
   };
 }
 
 function QuestionEditor({ q, index, group, onChange, onRemove, onMove, isFirst, isLast }) {
+  const isBehaviour = q.type === 'BEHAVIOUR' || Object.keys(q.revealMap || {}).length > 0 || (q.concern || []).length > 0;
   const set = (k, v) => onChange({ ...q, [k]: v });
   const setOpt = (i, lang, v) => onChange({ ...q, options: q.options.map((o, j) => (j === i ? { ...o, [lang]: v } : o)) });
   const incomplete = !q.textEn || q.options.some((o) => !o.en) || !OPTION_KEYS.includes(q.correct);
@@ -83,6 +128,7 @@ function QuestionEditor({ q, index, group, onChange, onRemove, onMove, isFirst, 
       <summary>
         <span className="q-editor-no">{index + 1}.</span>
         <span className="truncate">{q.textEn || <em className="muted">New question</em>}</span>
+        {q.qid && <span className="badge">{q.qid}</span>}
         {q.type && <span className="badge">{q.type}</span>}
         {q.correct && <span className="badge badge-ok">Ans {q.correct}</span>}
         {incomplete && <span className="badge badge-warn">incomplete</span>}
@@ -95,23 +141,60 @@ function QuestionEditor({ q, index, group, onChange, onRemove, onMove, isFirst, 
           <label className="field"><span>Category label</span>
             <input value={q.category} onChange={(e) => set('category', e.target.value)} placeholder="e.g. TAEP Fundamentals" />
           </label>
+          <label className="field"><span>Scoring dimension</span>
+            <input list="dimension-keys" value={q.dimension || ''} onChange={(e) => set('dimension', e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '_'))} placeholder="e.g. regulatory_knowledge" />
+          </label>
+          <label className="field"><span>Weight (points)</span>
+            <input type="number" min="0.5" step="0.5" value={q.weight ?? 1} onChange={(e) => set('weight', e.target.value)} />
+          </label>
         </div>
         <label className="field"><span>Question (English)</span><textarea rows={2} value={q.textEn} onChange={(e) => set('textEn', e.target.value)} /></label>
         <label className="field"><span>Question (Hindi)</span><textarea rows={2} value={q.textHi} onChange={(e) => set('textHi', e.target.value)} /></label>
+        <div className="form-grid">
+          <label className="field"><span>Situation / scenario (English, optional)</span><textarea rows={2} value={q.scenarioEn || ''} onChange={(e) => set('scenarioEn', e.target.value)} /></label>
+          <label className="field"><span>Situation / scenario (Hindi, optional)</span><textarea rows={2} value={q.scenarioHi || ''} onChange={(e) => set('scenarioHi', e.target.value)} /></label>
+        </div>
         <div className="options-editor">
           {OPTION_KEYS.map((k, i) => (
             <div key={k} className={`option-editor ${q.correct === k ? 'correct' : ''}`}>
               <label className="correct-pick">
-                <input type="radio" name={`correct-${group}-${index}`} checked={q.correct === k} onChange={() => set('correct', k)} />
+                <input type="radio" name={`correct-${group}-${index}`} checked={q.correct === k} onChange={() => onChange(setOptionKind({ ...q, correct: k }, k, 'best'))} />
                 <strong>{k}</strong>
               </label>
               <input value={q.options[i].en} onChange={(e) => setOpt(i, 'en', e.target.value)} placeholder={`Option ${k} (English)`} />
               <input value={q.options[i].hi} onChange={(e) => setOpt(i, 'hi', e.target.value)} placeholder={`Option ${k} (Hindi)`} />
+              <select
+                aria-label={`Scoring for option ${k}`}
+                value={optionKind(q, k)}
+                disabled={q.correct === k}
+                onChange={(e) => onChange(setOptionKind(q, k, e.target.value))}
+              >
+                {q.correct === k && <option value="best">Best answer (full)</option>}
+                <option value="full">Also full credit</option>
+                <option value="partial">Partial credit</option>
+                <option value="neutral">Neutral (0)</option>
+                <option value="concern">Concern (0, flagged)</option>
+                <option value="wrong">Wrong (0)</option>
+              </select>
+              {isBehaviour && (
+                <input
+                  className="span-all"
+                  value={(q.revealMap || {})[k] || ''}
+                  onChange={(e) => set('revealMap', { ...(q.revealMap || {}), [k]: e.target.value })}
+                  placeholder={`What choosing ${k} reveals (admin only)`}
+                />
+              )}
             </div>
           ))}
-          <p className="muted small">Select the radio button next to the correct option. The answer key stays on the server.</p>
+          <p className="muted small">
+            The radio marks the best answer. Use the dropdown to give other options full or partial credit, or mark them as a concern.
+            Scoring, interpretations and explanations stay on the server and are never shown to participants.
+          </p>
         </div>
-        <label className="field"><span>Explanation (answer key sheet only)</span><input value={q.explanation} onChange={(e) => set('explanation', e.target.value)} /></label>
+        <div className="form-grid">
+          <label className="field"><span>Explanation (English, answer key only)</span><textarea rows={2} value={q.explanation} onChange={(e) => set('explanation', e.target.value)} /></label>
+          <label className="field"><span>Explanation (Hindi, answer key only)</span><textarea rows={2} value={q.explanationHi || ''} onChange={(e) => set('explanationHi', e.target.value)} /></label>
+        </div>
         <div className="row-actions">
           <button type="button" className="btn btn-ghost btn-sm" disabled={isFirst} onClick={() => onMove(-1)}>↑ Move up</button>
           <button type="button" className="btn btn-ghost btn-sm" disabled={isLast} onClick={() => onMove(1)}>↓ Move down</button>
@@ -220,13 +303,19 @@ export default function ExamEditor() {
         estimatedMinutes: '',
         status: 'Active',
         thresholds: DEFAULT_THRESHOLDS,
+        config: DEFAULT_CONFIG,
         sections: [emptySection(1), emptySection(2)],
       });
       return;
     }
     api(`/admin/exams/${id}`)
       .then((d) => {
-        setForm({ ...d.exam, estimatedMinutes: d.exam.estimatedMinutes ?? '', sections: d.sections.length ? d.sections : [emptySection(1)] });
+        setForm({
+          ...d.exam,
+          estimatedMinutes: d.exam.estimatedMinutes ?? '',
+          config: { ...DEFAULT_CONFIG, ...(d.exam.config || {}) },
+          sections: d.sections.length ? d.sections : [emptySection(1)],
+        });
         setStats({ submitted: d.exam.submitted });
       })
       .catch((e) => setError(e.message));
@@ -236,6 +325,20 @@ export default function ExamEditor() {
 
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
   const setTh = (k) => (e) => setForm((f) => ({ ...f, thresholds: { ...f.thresholds, [k]: e.target.value } }));
+  const setCfg = (patch) => setForm((f) => ({ ...f, config: { ...f.config, ...patch } }));
+  const rulesList = form.config.remarkRules || [];
+  const setRule = (i, k, v) => setCfg({ remarkRules: rulesList.map((r, j) => (j === i ? { ...r, [k]: v } : r)) });
+  const moveRule = (i, d) => {
+    const next = [...rulesList];
+    [next[i], next[i + d]] = [next[i + d], next[i]];
+    setCfg({ remarkRules: next });
+  };
+  const dimensionKeys = [
+    ...new Set([
+      ...Object.keys(form.config.dimensions || {}),
+      ...form.sections.flatMap((sec) => sec.questions.map((q) => q.dimension)).filter(Boolean),
+    ]),
+  ];
   const totalQ = form.sections.reduce((n, s) => n + s.questions.length, 0);
 
   async function save(e) {
@@ -264,6 +367,9 @@ export default function ExamEditor() {
       <datalist id="type-tags">
         <option value="KNOWLEDGE" />
         <option value="BEHAVIOUR" />
+      </datalist>
+      <datalist id="dimension-keys">
+        {dimensionKeys.map((k) => <option key={k} value={k} />)}
       </datalist>
       <div className="page-head">
         <h1>{id ? 'Edit exam' : 'Create new exam'}</h1>
@@ -301,7 +407,51 @@ export default function ExamEditor() {
       </fieldset>
 
       <fieldset className="card">
-        <legend>Remarks thresholds (%)</legend>
+        <legend>Scoring</legend>
+        <div className="form-grid form-grid-6">
+          <label className="field"><span>Partial credit (% of a question's points)</span>
+            <input type="number" min="0" max="100" value={form.config.partialCreditPct ?? 50} onChange={(e) => setCfg({ partialCreditPct: e.target.value })} />
+          </label>
+          <label className="field"><span>Suggested seconds — Knowledge</span>
+            <input type="number" min="0" value={(form.config.timerSeconds || {}).KNOWLEDGE ?? ''} onChange={(e) => setCfg({ timerSeconds: { ...form.config.timerSeconds, KNOWLEDGE: e.target.value } })} placeholder="none" />
+          </label>
+          <label className="field"><span>Suggested seconds — Behaviour</span>
+            <input type="number" min="0" value={(form.config.timerSeconds || {}).BEHAVIOUR ?? ''} onChange={(e) => setCfg({ timerSeconds: { ...form.config.timerSeconds, BEHAVIOUR: e.target.value } })} placeholder="none" />
+          </label>
+        </div>
+        <p className="muted small">
+          Each question is worth its weight in points. Partial-credit options earn the percentage above. Suggested seconds are shown to
+          participants as a guide (the timer turns orange when exceeded); they do not end the question.
+        </p>
+      </fieldset>
+
+      <fieldset className="card">
+        <legend>Remark rules (checked in order — first match wins)</legend>
+        <p className="muted small">
+          Variables: <code>total_pct</code>, <code>knowledge_pct</code>, <code>behaviour_pct</code>, <code>section_1_pct</code>…,
+          <code> dim_&lt;dimension&gt;_pct</code>. Operators: <code>&gt;= &lt;= &gt; &lt; == != + - * /</code>, <code>and</code>, <code>or</code>, <code>not</code>.
+          Example: <code>total_pct &gt;= 70 and knowledge_pct &gt;= behaviour_pct + 20</code>.
+          {rulesList.length === 0 && ' No rules set — the threshold-based remarks below are used instead.'}
+        </p>
+        {rulesList.map((r, i) => (
+          <div className="rule-row" key={i}>
+            <input value={r.condition} onChange={(e) => setRule(i, 'condition', e.target.value)} placeholder="Condition" aria-label={`Rule ${i + 1} condition`} />
+            <textarea rows={2} value={r.en} onChange={(e) => setRule(i, 'en', e.target.value)} placeholder="Remark (English)" aria-label={`Rule ${i + 1} English`} />
+            <textarea rows={2} value={r.hi} onChange={(e) => setRule(i, 'hi', e.target.value)} placeholder="Remark (Hindi)" aria-label={`Rule ${i + 1} Hindi`} />
+            <div className="row-actions">
+              <button type="button" className="btn btn-ghost btn-sm" disabled={i === 0} onClick={() => moveRule(i, -1)} aria-label="Move up">↑</button>
+              <button type="button" className="btn btn-ghost btn-sm" disabled={i === rulesList.length - 1} onClick={() => moveRule(i, 1)} aria-label="Move down">↓</button>
+              <button type="button" className="btn btn-danger btn-sm" onClick={() => setCfg({ remarkRules: rulesList.filter((_, j) => j !== i) })}>Remove</button>
+            </div>
+          </div>
+        ))}
+        <button type="button" className="btn btn-secondary btn-sm" onClick={() => setCfg({ remarkRules: [...rulesList, { condition: '', en: '', hi: '' }] })}>
+          + Add rule
+        </button>
+      </fieldset>
+
+      <fieldset className="card">
+        <legend>Remarks thresholds (%) — used when no remark rules are set</legend>
         <p className="muted small">
           Total ≥ <b>Outstanding</b> → “You nailed it!”. Total ≥ <b>Good</b> → strength remark using the Knowledge / Behaviour thresholds.
           Total ≥ <b>Fair</b> → “Good effort”. Below Fair → growth remark. A Knowledge/Behaviour difference ≥ <b>Gap</b> adds a focus-area remark.

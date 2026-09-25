@@ -62,7 +62,7 @@ function PreExam({ data, onBegin, busy, error }) {
 export default function Exam() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { t, pick } = useLang();
+  const { t, pick, lang } = useLang();
 
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
@@ -82,6 +82,9 @@ export default function Exam() {
   const pendingRef = useRef(0);
   const qTimeRef = useRef({}); // no -> accumulated ms this session
   const shownAtRef = useRef(Date.now());
+  const currentRef = useRef(1);
+  const langRef = useRef(lang);
+  currentRef.current = current;
 
   const load = useCallback((view) => {
     offsetRef.current = new Date(view.serverTime).getTime() - Date.now();
@@ -122,7 +125,7 @@ export default function Exam() {
         let ok = false;
         for (let attempt = 0; attempt < 3 && !ok; attempt += 1) {
           try {
-            await api(`/exam/${id}/event`, { method: 'POST', body: event });
+            await api(`/exam/${id}/event`, { method: 'POST', body: event, keepalive: true });
             ok = true;
           } catch (e) {
             if (e.status && e.status < 500) break;
@@ -138,7 +141,34 @@ export default function Exam() {
     [id],
   );
 
-  function goTo(no) {
+  // Audit: language switches during the exam.
+  useEffect(() => {
+    const from = langRef.current;
+    langRef.current = lang;
+    if (inProgress && from !== lang) send({ type: 'lang', q: currentRef.current, from, to: lang });
+  }, [lang, inProgress, send]);
+
+  // Audit: leaving the exam tab (Page Visibility API).
+  useEffect(() => {
+    if (!inProgress) return undefined;
+    const onVisibility = () => {
+      send({ type: document.visibilityState === 'hidden' ? 'tab_hidden' : 'tab_visible', q: currentRef.current });
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => document.removeEventListener('visibilitychange', onVisibility);
+  }, [inProgress, send]);
+
+  function openReview() {
+    setMode('review');
+    send({ type: 'review' });
+  }
+
+  function openConfirm() {
+    setConfirmOpen(true);
+    send({ type: 'submit_attempt' });
+  }
+
+  function goTo(no, via = 'button') {
     if (!data || no < 1 || no > data.questions.length) return;
     const now = Date.now();
     qTimeRef.current[current] = (qTimeRef.current[current] || 0) + (now - shownAtRef.current);
@@ -148,7 +178,7 @@ export default function Exam() {
     if (no === current) return;
     setCurrent(no);
     setVisited((v) => ({ ...v, [no]: true }));
-    send({ type: 'view', q: no });
+    send({ type: 'view', q: no, via });
     window.scrollTo({ top: 0 });
   }
 
@@ -229,6 +259,8 @@ export default function Exam() {
   const answeredCount = Object.keys(answers).length;
   const elapsed = (Date.now() + offsetRef.current - new Date(attempt.startedAt).getTime()) / 1000;
   const onQuestion = ((qTimeRef.current[current] || 0) + (Date.now() - shownAtRef.current)) / 1000;
+  const suggested = Number((data.exam.timerSeconds || {})[q.type]) || 0;
+  const scenario = pick(q.scenarioEn, q.scenarioHi);
 
   const saveLabel = { saving: t('saving'), saved: t('saved'), error: t('saveFailed') }[saveState];
 
@@ -259,9 +291,9 @@ export default function Exam() {
             <Review
               questions={questions}
               progress={progress}
-              onJump={goTo}
+              onJump={(no) => goTo(no, 'review')}
               onBack={() => setMode('question')}
-              onSubmit={() => setConfirmOpen(true)}
+              onSubmit={openConfirm}
             />
           ) : (
             <div className="card question-card">
@@ -269,6 +301,12 @@ export default function Exam() {
                 <span className="section-chip">{t('sectionLabel', { n: section.no, name: pick(section.name, section.nameHi) })}</span>
                 <span className="muted">{t('questionOf', { n: q.no, total: questions.length })}</span>
               </div>
+              {scenario && (
+                <div className="scenario pre">
+                  <span className="scenario-label">{t('scenario')}</span>
+                  {scenario}
+                </div>
+              )}
               <h2 className="question-text pre">{pick(q.textEn, q.textHi)}</h2>
               <div className="options" role="radiogroup" aria-label={t('question')}>
                 {q.options.map((o) => (
@@ -299,7 +337,10 @@ export default function Exam() {
                     {t('clearAnswer')}
                   </button>
                 )}
-                <span className="muted small q-timer">{t('timeOnQuestion', { time: formatDuration(onQuestion) })}</span>
+                <span className={`muted small q-timer ${suggested && onQuestion > suggested ? 'over' : ''}`}>
+                  {t('timeOnQuestion', { time: formatDuration(onQuestion) })}
+                  {suggested > 0 && <> · {t('suggestedTime', { time: formatDuration(suggested) })}</>}
+                </span>
               </div>
               <div className="question-nav">
                 <button type="button" className="btn btn-secondary" onClick={() => goTo(current - 1)} disabled={current === 1}>
@@ -310,7 +351,7 @@ export default function Exam() {
                     {t('next')} →
                   </button>
                 ) : (
-                  <button type="button" className="btn btn-primary" onClick={() => setMode('review')}>
+                  <button type="button" className="btn btn-primary" onClick={openReview}>
                     {t('reviewAndSubmit')}
                   </button>
                 )}
@@ -319,7 +360,7 @@ export default function Exam() {
           )}
           {mode === 'question' && (
             <div className="review-link">
-              <button type="button" className="btn btn-ghost" onClick={() => setMode('review')}>
+              <button type="button" className="btn btn-ghost" onClick={openReview}>
                 {t('reviewAndSubmit')}
               </button>
             </div>
@@ -331,7 +372,7 @@ export default function Exam() {
           sections={sections}
           current={mode === 'question' ? current : null}
           progress={progress}
-          onJump={goTo}
+          onJump={(no) => goTo(no, 'palette')}
           open={paletteOpen}
           onClose={() => setPaletteOpen(false)}
         />

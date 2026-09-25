@@ -7,7 +7,7 @@ import TopBar from '../components/TopBar.jsx';
 
 export default function ParticipantHome() {
   const { user } = useAuth();
-  const { t, formatDate } = useLang();
+  const { t, formatDate, pick } = useLang();
   const [exams, setExams] = useState(null);
   const [error, setError] = useState('');
 
@@ -43,7 +43,7 @@ export default function ParticipantHome() {
       <TopBar />
       <main className="container">
         <h1>{t('myExams')}</h1>
-        <p className="muted">{user.name}</p>
+        <p className="muted">{pick(user.name, user.nameHi)}</p>
         {error && <div className="alert alert-error">{error}</div>}
         {!exams && !error && <p className="muted">{t('loading')}</p>}
         {exams && exams.length === 0 && <div className="card">{t('noExams')}</div>}

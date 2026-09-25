@@ -4,6 +4,7 @@ const config = require('../config');
 const store = require('../services/store');
 const excel = require('../services/excelService');
 const scoring = require('../services/scoringService');
+const audit = require('../services/auditService');
 const { attemptInfo } = require('./exam');
 const { resultCard } = require('./result');
 
@@ -40,6 +41,31 @@ function normalizeThresholds(t = {}) {
   return out;
 }
 
+const TYPES = ['KNOWLEDGE', 'BEHAVIOUR'];
+
+/** Per-exam scoring/display config: partial credit, suggested time, remark rules, dimension labels. */
+function normalizeConfig(input, existing = {}) {
+  const c = input && typeof input === 'object' ? input : existing || {};
+  const out = {};
+  out.partialCreditPct = Math.min(100, Math.max(0, num(c.partialCreditPct, 50)));
+  out.timerSeconds = {};
+  for (const t of TYPES) {
+    const v = num((c.timerSeconds || {})[t], 0);
+    if (v > 0) out.timerSeconds[t] = Math.min(3600, Math.round(v));
+  }
+  out.remarkRules = (Array.isArray(c.remarkRules) ? c.remarkRules : [])
+    .map((r) => ({ condition: clean(r.condition, 500), en: clean(r.en, 2000), hi: clean(r.hi, 2000) }))
+    .filter((r) => r.condition || r.en || r.hi);
+  const err = scoring.validateRemarkRules(out.remarkRules);
+  if (err) throw httpError(400, err);
+  out.dimensions = {};
+  for (const [key, d] of Object.entries(c.dimensions || {})) {
+    const k = clean(key, 60).toLowerCase().replace(/[^a-z0-9_]/g, '_');
+    if (k) out.dimensions[k] = { label: clean(d && d.label, 120), labelHi: clean(d && d.labelHi, 120) };
+  }
+  return out;
+}
+
 function normalizeMeta(body, existing = {}) {
   const meta = {
     title: clean(body.title, 200),
@@ -52,6 +78,7 @@ function normalizeMeta(body, existing = {}) {
     estimatedMinutes: body.estimatedMinutes === '' || body.estimatedMinutes == null ? null : Math.max(1, num(body.estimatedMinutes, 60)),
     status: STATUSES.includes(body.status) ? body.status : existing.status || 'Active',
     thresholds: normalizeThresholds(body.thresholds || existing.thresholds),
+    config: normalizeConfig(body.config, existing.config),
   };
   if (!meta.title) throw httpError(400, 'Exam title is required');
   return meta;
@@ -72,15 +99,24 @@ function normalizeSections(sections) {
       if (!clean(q.textEn)) throw httpError(400, `${where}: English question text is required`);
       if (options.some((o) => !o.en)) throw httpError(400, `${where}: all four English options are required`);
       if (!excel.OPTIONS.includes(correct)) throw httpError(400, `${where}: correct option must be A, B, C or D`);
+      const meta = excel.questionMeta({ ...q, correct });
       return {
         qid: clean(q.qid, 40),
         type: clean(q.type, 40).toUpperCase(),
         category: clean(q.category, 200),
         textEn: clean(q.textEn),
         textHi: clean(q.textHi),
+        scenarioEn: clean(q.scenarioEn),
+        scenarioHi: clean(q.scenarioHi),
         options,
         correct,
         explanation: clean(q.explanation),
+        ...meta,
+        dimension: clean(meta.dimension, 60).toLowerCase().replace(/[^a-z0-9_]/g, '_'),
+        difficulty: clean(meta.difficulty, 20),
+        explanationHi: clean(meta.explanationHi),
+        tags: meta.tags.map((t) => clean(t, 60)).slice(0, 20),
+        revealMap: Object.fromEntries(Object.entries(meta.revealMap).map(([k, v]) => [k, clean(v, 1000)])),
       };
     });
     return {
@@ -118,9 +154,21 @@ async function bankForEditor(exam) {
         category: q.category,
         textEn: q.textEn,
         textHi: q.textHi,
+        scenarioEn: q.scenarioEn,
+        scenarioHi: q.scenarioHi,
         options: q.options.map((o) => ({ en: o.en, hi: o.hi })),
         correct: q.correct,
         explanation: q.explanation,
+        explanationHi: q.explanationHi,
+        fullCredit: q.fullCredit.filter((l) => l !== q.correct),
+        partial: q.partial,
+        concern: q.concern,
+        neutral: q.neutral,
+        dimension: q.dimension,
+        weight: q.weight,
+        difficulty: q.difficulty,
+        tags: q.tags,
+        revealMap: q.revealMap,
       })),
   }));
 }
@@ -155,6 +203,13 @@ router.post('/exams', async (req, res) => {
   };
   await store.saveExam(exam);
   await store.saveQuestionBank(exam, sections);
+  await audit.log(req, 'ADMIN_CREATE_EXAM', {
+    admin_username: 'admin',
+    exam_id: exam.id,
+    exam_title: exam.title,
+    team: exam.team,
+    site: exam.site,
+  });
   res.status(201).json({ exam });
 });
 
@@ -171,17 +226,41 @@ router.put('/exams/:id', async (req, res) => {
   const sections = req.body.sections ? normalizeSections(req.body.sections) : null;
   await store.saveExam(exam);
   if (sections) await store.saveQuestionBank(exam, sections);
-  // Thresholds may have changed — refresh remarks already stored.
+  // Audit every scoring-related setting that changed.
+  const watched = {
+    thresholds: [existing.thresholds, exam.thresholds],
+    unlock_days: [existing.unlockDays, exam.unlockDays],
+    partial_credit_pct: [(existing.config || {}).partialCreditPct, exam.config.partialCreditPct],
+    remark_rules: [(existing.config || {}).remarkRules || [], exam.config.remarkRules],
+    timer_seconds: [(existing.config || {}).timerSeconds || {}, exam.config.timerSeconds],
+  };
+  for (const [field, [oldValue, newValue]] of Object.entries(watched)) {
+    if (JSON.stringify(oldValue ?? null) !== JSON.stringify(newValue ?? null)) {
+      await audit.log(req, 'ADMIN_CHANGE_THRESHOLD', {
+        admin_username: 'admin',
+        exam_id: exam.id,
+        field_changed: field,
+        old_value: oldValue ?? null,
+        new_value: newValue ?? null,
+      });
+    }
+  }
+  // Thresholds / remark rules may have changed — refresh remarks already stored.
   const summary = await store.getSummaryRows(exam);
-  if (summary.length) await store.rewriteSummary(exam, scoring.refreshRemarks(summary, exam.thresholds), scoring.buildAnalyticsSheet);
+  if (summary.length) {
+    const bank = await store.getQuestionBank(exam);
+    await store.rewriteSummary(exam, scoring.refreshRemarks(summary, exam), (s2, r2) => scoring.buildAnalyticsSheet(s2, r2, bank, exam));
+  }
   res.json({ exam });
 });
 
 router.patch('/exams/:id/status', async (req, res) => {
   const exam = await loadExam(req.params.id);
   if (!STATUSES.includes(req.body.status)) throw httpError(400, 'Invalid status');
+  const oldStatus = exam.status;
   exam.status = req.body.status;
   await store.saveExam(exam);
+  await audit.log(req, 'ADMIN_CHANGE_STATUS', { admin_username: 'admin', exam_id: exam.id, old_value: oldStatus, new_value: exam.status });
   res.json({ exam });
 });
 
@@ -211,6 +290,8 @@ router.get('/exams/:id/participants', async (req, res) => {
       return {
         username: a.username,
         name: (users.get(a.username) || {}).name || a.username,
+        designation: (users.get(a.username) || {}).designation || '',
+        shift: (users.get(a.username) || {}).shift || '',
         assignedAt: a.assignedAt,
         ...info,
         totalPct: r ? r.totalPct : null,
@@ -236,8 +317,10 @@ router.delete('/exams/:id/participants/:username', async (req, res) => {
 router.delete('/exams/:id/attempts/:username', async (req, res) => {
   const exam = await loadExam(req.params.id);
   const username = excel.normalizeUsername(req.params.username);
+  const bank = await store.getQuestionBank(exam);
   await store.deleteAttempt(exam.id, username);
-  await store.removeSubmission(exam, username, scoring.buildAnalyticsSheet);
+  await store.removeSubmission(exam, username, (s2, r2) => scoring.buildAnalyticsSheet(s2, r2, bank, exam));
+  await audit.log(req, 'ADMIN_RESET_ATTEMPT', { admin_username: 'admin', exam_id: exam.id, participant_username: username });
   res.json({ ok: true });
 });
 
@@ -247,13 +330,18 @@ router.get('/exams/:id/results/:username', async (req, res) => {
   const attempt = await store.getAttempt(exam.id, username);
   if (!attempt || !attempt.result) throw httpError(404, 'No submission');
   const responses = await store.getResponseRows(exam, username);
-  res.json({ result: resultCard(exam, attempt), attempt: attemptInfo(exam, attempt), responses });
+  await audit.log(req, 'ADMIN_VIEW_RESULT', { admin_username: 'admin', exam_id: exam.id, viewed_participant_username: username });
+  res.json({ result: resultCard(exam, attempt, { admin: true }), attempt: attemptInfo(exam, attempt), responses });
 });
 
 router.get('/exams/:id/analytics', async (req, res) => {
   const exam = await loadExam(req.params.id);
-  const [summary, responses] = await Promise.all([store.getSummaryRows(exam), store.getResponseRows(exam)]);
-  res.json({ analytics: scoring.computeAnalytics(summary, responses) });
+  const [summary, responses, bank] = await Promise.all([
+    store.getSummaryRows(exam),
+    store.getResponseRows(exam),
+    store.getQuestionBank(exam),
+  ]);
+  res.json({ analytics: scoring.computeAnalytics(summary, responses, bank, exam) });
 });
 
 router.get('/exams/:id/download', async (req, res) => {
@@ -264,12 +352,15 @@ router.get('/exams/:id/download', async (req, res) => {
     store.getResponseRows(exam),
     store.getQuestionBank(exam),
   ]);
-  const summary = scoring.refreshRemarks(rawSummary, exam.thresholds);
+  const summary = scoring.refreshRemarks(rawSummary, exam);
+  await audit.log(req, 'ADMIN_DOWNLOAD_EXCEL', { admin_username: 'admin', exam_id: exam.id, file_generated: exam.fileName });
+  const auditRows = audit.toRows((await store.getAudit({ examId: exam.id })).sort((a, b) => a.seq - b.seq));
   const buf = excel.buildResultsWorkbook({
     summary,
     responses,
     bank,
-    analyticsAoa: scoring.buildAnalyticsSheet(summary, responses),
+    analyticsAoa: scoring.buildAnalyticsSheet(summary, responses, bank, exam),
+    auditRows,
   });
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.setHeader(
@@ -286,6 +377,10 @@ router.get('/users', async (req, res) => {
   const users = userList.map((u) => ({
     username: u.username,
     name: u.name,
+    nameHi: u.nameHi,
+    designation: u.designation,
+    post: u.post,
+    shift: u.shift,
     createdAt: u.createdAt,
     examIds: assignments.filter((a) => a.username === u.username).map((a) => a.examId),
   }));
@@ -307,6 +402,7 @@ router.post('/participants', async (req, res) => {
   if (examId) await loadExam(examId);
   await store.upsertUsers([{ username, name, passwordHash: password ? await hashPassword(password) : '' }]);
   if (examId) await store.assign(examId, username);
+  await audit.log(req, 'ADMIN_ADD_PARTICIPANT', { admin_username: 'admin', participant_username: username, exam_id: examId || null });
   res.status(existing ? 200 : 201).json({ ok: true, created: !existing });
 });
 
@@ -355,6 +451,9 @@ router.post('/participants/bulk', async (req, res) => {
   }
   if (hashed.length) await store.upsertUsers(hashed);
   const assigned = examId && hashed.length ? await store.assign(examId, hashed.map((u) => u.username)) : 0;
+  for (const u of hashed) {
+    await audit.log(req, 'ADMIN_ADD_PARTICIPANT', { admin_username: 'admin', participant_username: u.username, exam_id: examId || null });
+  }
   res.json({
     created: hashed.filter((u) => !known.has(u.username)).length,
     updated: hashed.filter((u) => known.has(u.username)).length,
@@ -368,12 +467,226 @@ router.post('/users/:username/assign', async (req, res) => {
   if (!user) throw httpError(404, 'User not found');
   const exam = await loadExam(clean(req.body.examId, 40));
   await store.assign(exam.id, user.username);
+  await audit.log(req, 'ADMIN_ADD_PARTICIPANT', { admin_username: 'admin', participant_username: user.username, exam_id: exam.id });
   res.json({ ok: true });
 });
 
 router.delete('/users/:username', async (req, res) => {
   await store.deleteUser(req.params.username);
   res.json({ ok: true });
+});
+
+// ---------------------------------------------------------------- import question database
+
+const SECTION_NAMES = {
+  knowledge: { name: 'Knowledge', nameHi: 'ज्ञान' },
+  behaviour: { name: 'Behaviour', nameHi: 'व्यवहार' },
+  behavior: { name: 'Behaviour', nameHi: 'व्यवहार' },
+};
+
+/** One question from the PassSection database JSON -> editor/question shape. */
+function importQuestion(q, where) {
+  if (!q || typeof q !== 'object') throw httpError(400, `${where}: not an object`);
+  const en = q.en || {};
+  const hi = q.hi || {};
+  const byLetter = (list) => Object.fromEntries((list || []).map((o) => [String(o.letter || '').toUpperCase(), o]));
+  const enOpts = byLetter(en.options);
+  const hiOpts = byLetter(hi.options);
+  const key = q.answer_key || {};
+  const correct = String(key.correct_letter || '').toUpperCase();
+  const fullCredit = (en.options || []).filter((o) => o.is_correct).map((o) => String(o.letter).toUpperCase());
+  const preferred = excel.letters(key.preferred_options);
+  return {
+    qid: q.id,
+    type: q.type || String(q.section || '').toUpperCase(),
+    category: q.category,
+    difficulty: q.difficulty,
+    textEn: en.question,
+    textHi: hi.question,
+    scenarioEn: en.scenario,
+    scenarioHi: hi.scenario,
+    options: excel.OPTIONS.map((l) => ({ en: (enOpts[l] || {}).text || '', hi: (hiOpts[l] || {}).text || '' })),
+    correct,
+    fullCredit,
+    // Preferred-but-not-best answers earn partial credit.
+    partial: preferred.filter((l) => l !== correct && !fullCredit.includes(l)),
+    concern: key.concern_options,
+    neutral: key.neutral_options,
+    explanation: key.explanation_en,
+    explanationHi: key.explanation_hi,
+    revealMap: q.reveal_map,
+    dimension: (q.scoring || {}).dimension,
+    weight: (q.scoring || {}).weight,
+    tags: q.analytics_tags,
+  };
+}
+
+router.post('/import', async (req, res) => {
+  const db = req.body && req.body.database;
+  const metaIn = (req.body && req.body.meta) || {};
+  const resetPasswords = !!(req.body && req.body.resetPasswords);
+  if (!db || typeof db !== 'object' || !db.questions || typeof db.questions !== 'object') {
+    throw httpError(400, 'This does not look like the PassSection database JSON (no "questions" object).');
+  }
+  const warnings = [];
+
+  // Sections: every array under "questions" (knowledge, behaviour, ...) in file order.
+  const rawSections = Object.entries(db.questions).filter(([, v]) => Array.isArray(v) && v.length);
+  if (!rawSections.length) throw httpError(400, 'No questions found in the file.');
+  const sections = normalizeSections(
+    rawSections.map(([key, list]) => ({
+      ...(SECTION_NAMES[key.toLowerCase()] || { name: key, nameHi: '' }),
+      description: '',
+      descriptionHi: '',
+      questions: list.map((q, i) => importQuestion(q, `${key} #${i + 1}`)),
+    })),
+  );
+  const declared = [db.questions.total_knowledge, db.questions.total_behaviour].filter((n) => typeof n === 'number');
+  const found = rawSections.reduce((n, [, v]) => n + v.length, 0);
+  if (declared.length && declared.reduce((a, b) => a + b, 0) !== found) {
+    warnings.push(`The file declares ${declared.reduce((a, b) => a + b, 0)} questions but contains ${found}.`);
+  }
+
+  // Scoring config from the file.
+  const sys = db.system_config || {};
+  const timers = sys.timer_per_question_seconds || {};
+  const dimensions = {};
+  for (const group of Object.values(db.scoring_dimensions || {})) {
+    for (const [k, d] of Object.entries(group || {})) dimensions[k] = { label: d.label, labelHi: d.label_hi };
+  }
+  const remarkRules = ((db.remarks_config || {}).thresholds || []).map((t) => ({
+    condition: t.condition,
+    en: t.remark_en,
+    hi: t.remark_hi,
+  }));
+  const timerSeconds = { KNOWLEDGE: timers.knowledge, BEHAVIOUR: timers.behaviour ?? timers.behavior };
+  const estimated = sections.reduce(
+    (sum, sec) => sum + sec.questions.reduce((t, q) => t + (num(timerSeconds[q.type], 60) || 60), 0),
+    0,
+  );
+
+  const meta = normalizeMeta({
+    title: metaIn.title || 'Pass Section Knowledge & Behaviour Assessment 2026',
+    team: metaIn.team ?? 'Pass Section — LBIA',
+    site: metaIn.site ?? 'Lucknow International Airport',
+    examDate: metaIn.examDate || new Date().toISOString().slice(0, 10),
+    instructions: metaIn.instructions || '',
+    instructionsHi: metaIn.instructionsHi || '',
+    unlockDays: metaIn.unlockDays ?? sys.result_unlock_days ?? config.defaultUnlockDays,
+    estimatedMinutes: metaIn.estimatedMinutes || Math.ceil(estimated / 60),
+    status: metaIn.status || 'Active',
+    thresholds: config.defaultThresholds,
+    config: { partialCreditPct: metaIn.partialCreditPct ?? 50, timerSeconds, remarkRules, dimensions },
+  });
+
+  // Staff roster (participants only — the admin login always comes from ADMIN_PASSWORD).
+  const roster = Array.isArray(db.staff_roster) ? db.staff_roster : [];
+  const known = new Map((await store.getUsers()).map((u) => [u.username, u]));
+  const users = [];
+  let adminInRoster = false;
+  for (const [i, p] of roster.entries()) {
+    const username = excel.normalizeUsername(p.username);
+    if (p.role === 'admin' || username === config.adminUsername) {
+      adminInRoster = true;
+      continue;
+    }
+    if (!USERNAME_RE.test(username)) {
+      warnings.push(`Staff #${i + 1} (${p.name || '?'}): invalid username "${p.username}" — skipped.`);
+      continue;
+    }
+    const password = String(p.initial_password || '');
+    const isNew = !known.has(username);
+    if (isNew && password.length < 4) {
+      warnings.push(`Staff ${username}: missing initial_password — skipped.`);
+      continue;
+    }
+    users.push({
+      username,
+      name: clean(p.name, 200),
+      nameHi: clean(p.name_hi, 200),
+      designation: clean(p.designation, 200),
+      post: clean(p.post, 100),
+      shift: clean(p.shift, 100),
+      staffId: clean(p.id, 40),
+      passwordHash: isNew || resetPasswords ? await hashPassword(password) : '',
+      isNew,
+    });
+  }
+
+  const exam = { id: `EX${Date.now().toString(36).toUpperCase()}`, ...meta, fileName: '', createdAt: new Date().toISOString() };
+  await store.saveExam(exam);
+  await store.saveQuestionBank(exam, sections);
+  if (users.length) await store.upsertUsers(users);
+  const assigned = users.length ? await store.assign(exam.id, users.map((u) => u.username)) : 0;
+
+  await audit.log(req, 'ADMIN_CREATE_EXAM', { admin_username: 'admin', exam_id: exam.id, exam_title: exam.title, team: exam.team, site: exam.site });
+  await audit.log(req, 'ADMIN_IMPORT_DATABASE', {
+    admin_username: 'admin',
+    exam_id: exam.id,
+    source_ref: db.ref || null,
+    source_version: db.version || null,
+    questions: found,
+    staff_created: users.filter((u) => u.isNew).length,
+    staff_updated: users.filter((u) => !u.isNew).length,
+    passwords_reset: resetPasswords,
+  });
+  for (const u of users) {
+    await audit.log(req, 'ADMIN_ADD_PARTICIPANT', { admin_username: 'admin', participant_username: u.username, exam_id: exam.id });
+  }
+
+  res.status(201).json({
+    exam,
+    questions: found,
+    sections: sections.map((sec) => ({ name: sec.name, questions: sec.questions.length })),
+    created: users.filter((u) => u.isNew).length,
+    updated: users.filter((u) => !u.isNew).length,
+    assigned,
+    adminInRoster,
+    warnings,
+  });
+});
+
+// ---------------------------------------------------------------- audit trail (admin only)
+
+router.get('/audit', async (req, res) => {
+  const limit = Math.min(500, Math.max(1, Math.floor(num(req.query.limit, 100))));
+  const entries = await store.getAudit({
+    examId: clean(req.query.examId, 40) || undefined,
+    username: excel.normalizeUsername(req.query.username) || undefined,
+    event: clean(req.query.event, 60) || undefined,
+    beforeSeq: num(req.query.beforeSeq, 0) || undefined,
+    limit,
+  });
+  res.json({ entries: audit.toRows(entries), events: audit.EVENTS, hasMore: entries.length === limit });
+});
+
+router.get('/audit/verify', async (req, res) => {
+  res.json(await audit.verify());
+});
+
+router.get('/audit/download', async (req, res) => {
+  const examId = clean(req.query.examId, 40) || undefined;
+  const [entries, check] = await Promise.all([store.getAudit({ examId }), audit.verify()]);
+  const rows = audit.toRows(entries.sort((a, b) => a.seq - b.seq));
+  const buf = excel.buildSheetsWorkbook([
+    { name: 'Audit_Log', rows },
+    {
+      name: 'Verification',
+      rows: [
+        {
+          'Checked At (UTC)': new Date().toISOString(),
+          'Chain Intact': check.ok ? 'YES' : 'NO',
+          'Entries Checked': check.count,
+          'First Problem': check.ok ? '' : `#${check.brokenAt}: ${check.reason}`,
+          'Last Hash': check.lastHash || '',
+        },
+      ],
+    },
+  ]);
+  const name = `Audit_Log${examId ? `_${examId}` : ''}_${new Date().toISOString().slice(0, 10)}.xlsx`;
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="${name}"`);
+  res.send(buf);
 });
 
 // ---------------------------------------------------------------- logo

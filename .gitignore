@@ -7,3 +7,7 @@ frontend/dist/
 backend/data/*
 !backend/data/.gitkeep
 !backend/data/sample-questions.json
+# Question databases contain the answer key and staff passwords — never commit them.
+*Quiz_Database*.json
+*quiz_database*.json
+*staff_roster*.json

@@ -3,6 +3,7 @@ const store = require('../services/store');
 const { OPTIONS } = require('../services/excelService');
 const timer = require('../services/timerService');
 const scoring = require('../services/scoringService');
+const audit = require('../services/auditService');
 
 const router = express.Router();
 
@@ -18,6 +19,8 @@ function publicExam(exam) {
     unlockDays: exam.unlockDays,
     estimatedMinutes: exam.estimatedMinutes,
     status: exam.status,
+    // Suggested seconds per question by type, e.g. { KNOWLEDGE: 30, BEHAVIOUR: 45 } (a guide, not a hard limit).
+    timerSeconds: (exam.config && exam.config.timerSeconds) || {},
   };
 }
 
@@ -30,6 +33,8 @@ function sanitizeQuestions(bank) {
     category: q.category,
     textEn: q.textEn,
     textHi: q.textHi,
+    scenarioEn: q.scenarioEn || '',
+    scenarioHi: q.scenarioHi || '',
     options: q.options.map((o) => ({ key: o.key, en: o.en, hi: o.hi })),
   }));
 }
@@ -128,29 +133,127 @@ router.post('/:id/start', async (req, res) => {
       startedAt: new Date().toISOString(),
       state,
     });
+    await audit.log(req, 'EXAM_START', { username, exam_id: exam.id, exam_title: exam.title });
+    await audit.log(req, 'QUESTION_VIEW', {
+      username,
+      exam_id: exam.id,
+      question_id: bank.questions[0].qid,
+      question_number: 1,
+      section: bank.questions[0].sectionNo,
+      time_on_previous_question_seconds: null,
+    });
   }
+  req.session.activeExam = exam.id;
   res.json(await examView(exam, username));
 });
+
+const secs = (ms) => Math.round(Math.max(0, ms) / 1000);
+const VIA = ['button', 'palette', 'review', 'resume'];
 
 router.post('/:id/event', async (req, res) => {
   const exam = await loadAssignedExam(req, res);
   if (!exam) return;
-  const attempt = await store.getAttempt(exam.id, req.session.user.username);
+  const { username } = req.session.user;
+  const attempt = await store.getAttempt(exam.id, username);
   if (!attempt || attempt.status !== 'in_progress') return res.status(409).json({ error: 'Exam not in progress' });
-  const total = (await store.getQuestionBank(exam)).questions.length;
+  const bank = await store.getQuestionBank(exam);
   const { type, q, option, flagged } = req.body || {};
-  const no = Number(q);
-  if (!Number.isInteger(no) || no < 1 || no > total) return res.status(400).json({ error: 'Invalid question' });
+  // Review / submit events are not tied to a question; everything else is.
+  const needsQuestion = !['review', 'submit_attempt'].includes(type);
+  const no = needsQuestion ? Number(q) : Number(attempt.state.current) || 1;
+  if (!Number.isInteger(no) || no < 1 || no > bank.questions.length) return res.status(400).json({ error: 'Invalid question' });
+  const question = bank.questions[no - 1];
+  const state = attempt.state;
+  const now = Date.now();
+  const base = { username, exam_id: exam.id, question_id: question.qid };
+  const events = [];
+  let changed = true;
 
-  if (type === 'view') timer.recordView(attempt.state, no);
-  else if (type === 'answer') {
+  if (type === 'view') {
+    const from = state.current;
+    const prevShownAt = state.lastViewAt;
+    timer.recordView(state, no, now);
+    if (from !== no) {
+      const via = VIA.includes(req.body.via) ? req.body.via : 'button';
+      events.push(['NAVIGATION', { username, exam_id: exam.id, from_question: from || null, to_question: no, via_palette_or_button: via }]);
+      events.push([
+        'QUESTION_VIEW',
+        {
+          ...base,
+          question_number: no,
+          section: question.sectionNo,
+          time_on_previous_question_seconds: prevShownAt ? secs(now - prevShownAt) : null,
+        },
+      ]);
+    } else changed = false;
+  } else if (type === 'answer') {
     const opt = String(option || '').toUpperCase();
     if (opt && !OPTIONS.includes(opt)) return res.status(400).json({ error: 'Invalid option' });
-    timer.recordAnswer(attempt.state, no, opt);
-  } else if (type === 'flag') timer.recordFlag(attempt.state, no, !!flagged);
-  else return res.status(400).json({ error: 'Invalid event' });
+    const before = (state.q && state.q[no]) || {};
+    const previous = before.answer || '';
+    timer.recordAnswer(state, no, opt, now);
+    const after = state.q[no];
+    if (previous === opt) changed = false;
+    else {
+      events.push([
+        'ANSWER_SELECT',
+        {
+          ...base,
+          option_selected: opt || null,
+          previous_option: previous || null,
+          time_since_question_displayed_seconds: state.lastViewAt ? secs(now - state.lastViewAt) : null,
+          change_count: after.changes,
+        },
+      ]);
+      if (previous) {
+        events.push(['ANSWER_CHANGE', { ...base, old_option: previous, new_option: opt || null, time_of_change: new Date(now).toISOString() }]);
+      }
+    }
+  } else if (type === 'flag') {
+    timer.recordFlag(state, no, !!flagged, now);
+    events.push(['QUESTION_FLAG', { ...base, flagged_true_or_false: !!flagged }]);
+  } else if (type === 'lang') {
+    const langs = ['en', 'hi'];
+    state.langToggles = (state.langToggles || 0) + 1;
+    events.push([
+      'LANGUAGE_TOGGLE',
+      { ...base, from_language: langs.includes(req.body.from) ? req.body.from : null, to_language: langs.includes(req.body.to) ? req.body.to : null },
+    ]);
+  } else if (type === 'tab_hidden') {
+    if (!state.hiddenAt) {
+      state.hiddenAt = now;
+      state.tabHidden = (state.tabHidden || 0) + 1;
+      // Duration is not known yet; it is recorded on BROWSER_TAB_VISIBLE.
+      events.push(['BROWSER_TAB_HIDDEN', { ...base, duration_seconds: null }]);
+    } else changed = false;
+  } else if (type === 'tab_visible') {
+    if (state.hiddenAt) {
+      const hiddenMs = Math.min(24 * 3600 * 1000, now - state.hiddenAt);
+      state.hiddenMs = (state.hiddenMs || 0) + hiddenMs;
+      state.hiddenAt = null;
+      events.push(['BROWSER_TAB_VISIBLE', { ...base, was_hidden_for_seconds: secs(hiddenMs) }]);
+    } else changed = false;
+  } else if (type === 'review') {
+    changed = false;
+    const qs = Object.values(state.q || {});
+    events.push([
+      'REVIEW_SCREEN_VIEW',
+      {
+        username,
+        exam_id: exam.id,
+        unanswered_count: bank.questions.length - qs.filter((x) => x.answer).length,
+        flagged_count: qs.filter((x) => x.flagged).length,
+        time_reached_review: secs(now - new Date(attempt.startedAt).getTime()),
+      },
+    ]);
+  } else if (type === 'submit_attempt') {
+    changed = false;
+    events.push(['SUBMIT_ATTEMPT', { username, exam_id: exam.id, confirmation_shown: true }]);
+  } else return res.status(400).json({ error: 'Invalid event' });
 
-  await store.saveAttempt(exam.id, attempt);
+  if (changed) await store.saveAttempt(exam.id, attempt);
+  for (const [event, fields] of events) await audit.log(req, event, fields);
+  req.session.activeExam = exam.id;
   res.json({ ok: true, savedAt: new Date().toISOString() });
 });
 
@@ -164,14 +267,28 @@ router.post('/:id/submit', async (req, res) => {
 
   const [bank, user] = await Promise.all([store.getQuestionBank(exam), store.getUser(username)]);
   attempt.submittedAt = new Date().toISOString();
-  timer.finalize(attempt.state, new Date(attempt.submittedAt).getTime());
+  const end = new Date(attempt.submittedAt).getTime();
+  // A tab that is still hidden at submit time counts until now.
+  if (attempt.state.hiddenAt) {
+    attempt.state.hiddenMs = (attempt.state.hiddenMs || 0) + Math.max(0, end - attempt.state.hiddenAt);
+    attempt.state.hiddenAt = null;
+  }
+  timer.finalize(attempt.state, end);
   attempt.status = 'submitted';
 
   const { result, summaryRow, responseRows } = scoring.scoreAttempt({ exam, bank, user, attempt });
-  await store.saveSubmission(exam, summaryRow, responseRows, scoring.buildAnalyticsSheet);
+  await store.saveSubmission(exam, summaryRow, responseRows, (s, r) => scoring.buildAnalyticsSheet(s, r, bank, exam));
   attempt.result = result;
   await store.saveAttempt(exam.id, attempt);
-  res.json({ attempt: attemptInfo(exam, attempt), name: user.name });
+  await audit.log(req, 'SUBMIT_CONFIRM', {
+    username,
+    exam_id: exam.id,
+    total_time_seconds: result.totalSeconds,
+    answers_submitted: result.answered,
+    unanswered_count: result.questionCount - result.answered,
+  });
+  req.session.activeExam = null;
+  res.json({ attempt: attemptInfo(exam, attempt), name: user.name, nameHi: user.nameHi || '' });
 });
 
 module.exports = router;

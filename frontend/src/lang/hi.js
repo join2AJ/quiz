@@ -69,6 +69,13 @@ const hi = {
   saveFailed: 'सहेजा नहीं गया — अपना कनेक्शन जांचें',
   clearAnswer: 'उत्तर हटाएं',
 
+  scenario: 'स्थिति',
+  suggestedTime: 'सुझाया गया समय {time}',
+  points: 'अंक',
+  dimensionScores: 'क्षेत्र-वार क्षमता',
+  knowledgeAreas: 'ज्ञान के क्षेत्र',
+  behaviourAreas: 'व्यवहार के क्षेत्र',
+
   // Review
   reviewTitle: 'अपने उत्तरों की समीक्षा करें',
   reviewHint: 'किसी प्रश्न पर वापस जाने के लिए उसकी पंक्ति पर क्लिक करें।',

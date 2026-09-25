@@ -12,14 +12,17 @@ export function ResultCard({ exam, result }) {
   return (
     <div className="card result-card">
       <p className="muted">{t('yourResult')}</p>
-      <h1>{result.name}</h1>
+      <h1>{pick(result.name, result.nameHi)}</h1>
       <p className="muted">
         {[exam.title, exam.examDate && formatDate(exam.examDate), exam.team, exam.site].filter(Boolean).join(' · ')}
       </p>
       <div className="result-hero">
         <ScoreGauge value={result.totalPct} label={t('totalScore')} />
         <div className="result-hero-text">
-          <div className="result-score">{t('scoreOutOf', { correct: result.correct, total: result.total })}</div>
+          <div className="result-score">
+            {t('scoreOutOf', { correct: result.correct, total: result.total })}
+            {result.total !== result.questionCount && result.questionCount ? <span className="muted small"> {t('points')}</span> : null}
+          </div>
           <div className="muted">
             {t('timeTaken')}: <span className="mono">{formatDuration(result.totalSeconds)}</span>
           </div>
@@ -36,6 +39,29 @@ export function ResultCard({ exam, result }) {
         <>
           <ScoreBar label={t('knowledge')} value={result.knowledgePct} />
           <ScoreBar label={t('behaviour')} value={result.behaviourPct} />
+        </>
+      )}
+      {result.dimensions && result.dimensions.length > 0 && (
+        <>
+          <h2>{t('dimensionScores')}</h2>
+          {[
+            ['KNOWLEDGE', t('knowledgeAreas')],
+            ['BEHAVIOUR', t('behaviourAreas')],
+            ['', ''],
+          ].map(([group, heading]) => {
+            const list = result.dimensions.filter((d) =>
+              group ? d.group === group : !['KNOWLEDGE', 'BEHAVIOUR'].includes(d.group),
+            );
+            if (!list.length) return null;
+            return (
+              <div key={group || 'other'} className="dimension-group">
+                {heading && <h3>{heading}</h3>}
+                {list.map((d) => (
+                  <ScoreBar key={d.key} label={pick(d.label, d.labelHi)} value={d.pct} />
+                ))}
+              </div>
+            );
+          })}
         </>
       )}
       <div className="remarks">

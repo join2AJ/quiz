@@ -7,6 +7,22 @@ import Modal from '../Modal.jsx';
 import { ResultCard } from '../../pages/Result.jsx';
 import { AddParticipantForm, CsvUpload } from './ParticipantForms.jsx';
 
+const KIND = {
+  correct: 'Full credit',
+  acceptable: 'Partial credit',
+  neutral: 'Neutral',
+  concern: 'Concern',
+  incorrect: 'Wrong',
+};
+const KIND_CLASS = {
+  'Correct / Preferred': 'correct',
+  'Acceptable (partial)': 'acceptable',
+  Concern: 'concern',
+  Neutral: 'neutral',
+  Incorrect: 'incorrect',
+  Unanswered: 'incorrect',
+};
+
 function statusBadge(p) {
   if (p.status === 'submitted') return <span className="badge badge-submitted">Submitted</span>;
   if (p.status === 'in_progress') return <span className="badge badge-in_progress">In progress</span>;
@@ -45,6 +61,7 @@ function ParticipantsTab({ exam, participants, reload, onView }) {
               <tr>
                 <th>Name</th>
                 <th>Username</th>
+                <th className="hide-sm">Designation / Shift</th>
                 <th>Status</th>
                 <th>Submitted</th>
                 <th className="num">Score</th>
@@ -56,6 +73,7 @@ function ParticipantsTab({ exam, participants, reload, onView }) {
                 <tr key={p.username}>
                   <td>{p.name}</td>
                   <td className="mono">{p.username}</td>
+                  <td className="small hide-sm">{[p.designation, p.shift].filter(Boolean).join(' · ')}</td>
                   <td>{statusBadge(p)}</td>
                   <td className="small">{p.submittedAt ? new Date(p.submittedAt).toLocaleString() : '—'}</td>
                   <td className="num">{p.totalPct !== null ? `${p.totalPct}%` : '—'}</td>
@@ -152,6 +170,92 @@ function AnalyticsTab({ examId }) {
           />
         </div>
       </div>
+      {a.dimensions && a.dimensions.length > 0 && (
+        <div className="card">
+          <h3>Dimension-wise average</h3>
+          {['KNOWLEDGE', 'BEHAVIOUR', ''].map((g) => {
+            const list = a.dimensions.filter((d) => (g ? d.group === g : !['KNOWLEDGE', 'BEHAVIOUR'].includes(d.group)));
+            if (!list.length) return null;
+            return (
+              <div key={g || 'other'} className="dimension-group">
+                {g && <h3>{g === 'KNOWLEDGE' ? 'Knowledge' : 'Behaviour'}</h3>}
+                {list.map((d) => <ScoreBar key={d.key} label={d.label} value={d.average} />)}
+              </div>
+            );
+          })}
+        </div>
+      )}
+      {a.behaviour && a.behaviour.length > 0 && (
+        <div className="card">
+          <h3>Behaviour answer patterns (admin only)</h3>
+          <p className="muted small">What each option reveals, and how many people chose it. Concern options are highlighted.</p>
+          {a.behaviour.map((q) => (
+            <details key={q.no} className="q-editor" style={{ marginBottom: '0.5rem' }}>
+              <summary>
+                <span className="q-editor-no">{q.qid || q.no}</span>
+                <span className="truncate">{q.category} — {q.text}</span>
+                {q.options.some((o) => o.kind === 'concern' && o.count) && (
+                  <span className="badge badge-bad">{q.options.filter((o) => o.kind === 'concern').reduce((n, o) => n + o.count, 0)} concern</span>
+                )}
+              </summary>
+              <div className="q-editor-body">
+                <table className="table table-compact">
+                  <thead><tr><th>Option</th><th>Chosen</th><th>Scored as</th><th>What it reveals</th></tr></thead>
+                  <tbody>
+                    {q.options.map((o) => (
+                      <tr key={o.option}>
+                        <td><strong>{o.option}</strong></td>
+                        <td className="nowrap">
+                          <span className={`opt-bar ${o.kind === 'concern' ? 'concern' : ''}`} style={{ width: `${q.attempts ? (o.count / q.attempts) * 80 : 0}px` }} />
+                          {o.count}
+                        </td>
+                        <td className={`kind-${o.kind}`}>{KIND[o.kind] || '—'}</td>
+                        <td className="small">{o.interpretation}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {q.unanswered > 0 && <p className="muted small">Unanswered: {q.unanswered}</p>}
+              </div>
+            </details>
+          ))}
+        </div>
+      )}
+      <div className="grid-2">
+        <div className="card">
+          <h3>Concern answers</h3>
+          {!a.concerns || a.concerns.length === 0 ? (
+            <p className="muted">No concern options were chosen.</p>
+          ) : (
+            <table className="table table-compact">
+              <thead><tr><th>Participant</th><th>Q</th><th>Opt</th><th>What it reveals</th></tr></thead>
+              <tbody>
+                {a.concerns.map((c) => (
+                  <tr key={`${c.username}-${c.no}`}><td>{c.name}</td><td>{c.qid || c.no}</td><td>{c.option}</td><td className="small">{c.interpretation}</td></tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+        <div className="card">
+          <h3>Integrity signals</h3>
+          <p className="muted small">Tab switches use the browser's Page Visibility API. A few short switches can be innocent (for example, a notification). Look for patterns.</p>
+          <table className="table table-compact">
+            <thead><tr><th>Participant</th><th className="num">Tab switches</th><th className="num">Time away</th><th className="num">Changes</th><th className="num">Lang</th></tr></thead>
+            <tbody>
+              {(a.integrity || []).map((r) => (
+                <tr key={r.username}>
+                  <td>{r.name}</td>
+                  <td className={`num ${r.tabSwitches ? 'kind-concern' : ''}`}>{r.tabSwitches}</td>
+                  <td className="num mono">{r.timeAway}</td>
+                  <td className="num">{r.answerChanges}</td>
+                  <td className="num">{r.languageToggles}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
       <div className="card">
         <h3>Section-wise average</h3>
         {a.sections.map((s) => (
@@ -160,17 +264,17 @@ function AnalyticsTab({ examId }) {
       </div>
       <div className="card">
         <BarChart
-          title="Question-level accuracy (% of participants correct)"
+          title="Question-level score (average % of points earned)"
           unit="%"
           max={100}
-          data={a.questions.map((q) => ({ label: `Q${q.no} · ${q.category || q.section}`, short: q.no, value: q.accuracy, detail: q.text }))}
+          data={a.questions.map((q) => ({ label: `${q.qid || `Q${q.no}`} · ${q.category || q.section}`, short: q.no, value: q.accuracy, detail: q.text }))}
         />
       </div>
       <div className="grid-2">
         <div className="card">
-          <h3>Most often answered wrong</h3>
+          <h3>Lowest-scoring questions</h3>
           <table className="table table-compact">
-            <thead><tr><th>Q</th><th>Question</th><th className="num">Correct</th></tr></thead>
+            <thead><tr><th>Q</th><th>Question</th><th className="num">Score</th></tr></thead>
             <tbody>
               {a.hardest.map((q) => (
                 <tr key={q.no}><td>{q.no}</td><td className="truncate">{q.text}</td><td className="num">{q.accuracy}%</td></tr>
@@ -232,22 +336,34 @@ function ResultModal({ exam, participant, onClose }) {
       ) : (
         <div className="stack modal-scroll">
           <ResultCard exam={exam} result={d.result} />
+          {d.result.integrity && (
+            <div className="stat-row">
+              <div className="stat"><span className="stat-value">{d.result.integrity.tabSwitches}</span><span className="stat-label">Tab switches</span></div>
+              <div className="stat"><span className="stat-value mono">{formatDuration(d.result.integrity.hiddenSeconds)}</span><span className="stat-label">Time away from tab</span></div>
+              <div className="stat"><span className="stat-value">{d.result.integrity.answerChanges}</span><span className="stat-label">Answer changes</span></div>
+              <div className="stat"><span className="stat-value">{d.result.concernCount ?? 0}</span><span className="stat-label">Concern answers</span></div>
+            </div>
+          )}
           <h3>Question-wise responses</h3>
           <div className="table-wrap">
             <table className="table table-compact">
               <thead>
-                <tr><th>Q</th><th>Category</th><th>Selected</th><th>Correct</th><th className="num">Time (s)</th><th className="num">Changed</th><th>Flag</th></tr>
+                <tr><th>Q</th><th>Category</th><th>Selected</th><th>Result</th><th className="num">Points</th><th className="num">Time (s)</th><th className="num">Changed</th><th>Flag</th><th>What it reveals</th></tr>
               </thead>
               <tbody>
                 {d.responses.map((r) => (
                   <tr key={r['Question No']}>
-                    <td>{r['Question No']}</td>
+                    <td>{r.QID || r['Question No']}</td>
                     <td>{r.Category}</td>
                     <td>{r['Option Selected']}</td>
-                    <td>{r['Correct Y/N'] === 'Y' ? <span className="badge badge-ok">Y</span> : <span className="badge badge-bad">N</span>}</td>
+                    <td className={`kind-${KIND_CLASS[r['Response Type']] || (r['Correct Y/N'] === 'Y' ? 'correct' : 'incorrect')}`}>
+                      {r['Response Type'] || (r['Correct Y/N'] === 'Y' ? 'Correct' : 'Incorrect')}
+                    </td>
+                    <td className="num">{r.Points ?? (r['Correct Y/N'] === 'Y' ? 1 : 0)}{r.Weight ? `/${r.Weight}` : ''}</td>
                     <td className="num">{r['Time on Question (seconds)']}</td>
                     <td className="num">{r['Times Changed']}</td>
                     <td>{r['Flagged Y/N'] === 'Y' ? '⚑' : ''}</td>
+                    <td className="small">{r.Interpretation || ''}</td>
                   </tr>
                 ))}
               </tbody>

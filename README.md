@@ -98,6 +98,30 @@ SESSION_SECRET=<long random string>
 **Exam status:** `Active` (participants can start it), `Closed` (no new starts), or `Results Released`
 (everyone who submitted sees their result straight away, whatever the unlock date).
 
+## 3a. Import the PassSection question database (fastest)
+
+If you have the **PassSection database JSON** (questions, answer key, behaviour scoring, remark rules and staff roster in
+one file):
+
+1. Sign in as `admin` and open **Import**.
+2. Choose the JSON file. The page shows what it contains (question counts, staff, remark rules, dimensions, suggested
+   times) and lists the staff it will create.
+3. Check the exam details (title, team, site, date, instructions in EN/HI, unlock delay, partial credit), then click
+   **Import**.
+
+This creates:
+- one exam with a **Knowledge** and a **Behaviour** section, all bilingual questions and scenarios, and the answer key;
+- the behaviour scoring model: best answer = full credit, other *preferred* answers = partial credit (50% by default),
+  *concern* answers flagged for the admin, and what each option reveals (admin only);
+- the weight and scoring dimension of each question, with bilingual dimension labels;
+- your remark rules (checked in order, first match wins) and suggested seconds per question type;
+- a login for every staff member (initial password from the file, stored as a bcrypt hash), assigned to the exam.
+
+The file's `admin` row is ignored. The admin password is always the `ADMIN_PASSWORD` setting.
+
+> **Keep this file private.** It contains the answer key and everyone's initial passwords. Upload it through the admin
+> page only. Never commit it to the repository, which is public. `.gitignore` blocks the usual file names.
+
 ## 4. The participant experience
 
 - The login page has an EN/HI toggle. The choice is saved in the browser (`localStorage`).
@@ -169,7 +193,7 @@ free **Supabase** Postgres database. Excel reports are generated from it wheneve
    (e.g. Mumbai) and any database password.
 2. When the project is ready, open **SQL Editor → New query**, paste the whole of
    [`supabase/schema.sql`](supabase/schema.sql) and click **Run**. It creates the `psq_*` tables and
-   is safe to run again.
+   the audit log, and is safe to run again. **Run it again after updating the app**, because it adds any new columns.
 3. Open **Project Settings → API** and copy:
    - **Project URL**, e.g. `https://abcdefgh.supabase.co`
    - the **service_role** secret key (not the anon key). Keep it secret: it is only ever used on
@@ -199,6 +223,35 @@ Notes:
 - Large CSV uploads are sent in batches of 50 rows to stay within Netlify's function time limit.
 - The same Supabase settings also work on Railway/Render or locally. Without them, the app stores
   Excel files on disk as before.
+
+## Scoring model
+
+- Every question is worth its **weight** in points (default 1).
+- **Full credit**: the best answer, plus any other option marked "also full credit".
+- **Partial credit**: acceptable options earn a set percentage of the points (default 50%, set per exam).
+- **Neutral / concern / wrong / unanswered**: 0 points. Concern answers are counted and listed for the admin.
+- Section, Knowledge, Behaviour, dimension and total percentages are *points earned ÷ points possible*.
+- **Remarks**: if the exam has remark rules, they are checked in order and the first match is shown (conditions like
+  `total_pct >= 70 and knowledge_pct >= behaviour_pct + 20`, evaluated safely on the server). Without rules, the threshold
+  remarks are used. Editing rules or thresholds updates remarks for results already submitted.
+- Participants see their total, section scores, a per-dimension breakdown and the remark. They never see the answer key,
+  what their answers reveal, their concern count or their integrity signals.
+
+## Audit trail
+
+Every login attempt, login, logout, session timeout, exam start, question view, navigation (button, palette or review),
+answer, answer change, flag, language switch, tab hide/show (Page Visibility API), review screen, submit attempt, submit,
+result view and admin action (create/import exam, add participant, view result, download, threshold or rule change,
+status change, reset) is recorded. Times are ISO 8601 UTC, each login gets a random session ID, and IP addresses are
+stored only as keyed SHA-256 hashes.
+
+Each entry stores the SHA-256 hash of the previous entry, so editing, deleting or re-ordering any entry breaks the chain.
+In Supabase the chain is computed by a database trigger under a lock (safe with many users at once), and the table rejects
+updates and deletes. **Admin → Audit log** lets you filter entries, **Verify integrity** (recomputes every hash) and
+download everything as Excel. Each exam's Excel download also includes an `Audit_Log` sheet for that exam.
+
+The Analytics tab shows **integrity signals** per participant (tab switches, time away from the exam tab, answer changes,
+language switches). The exam instructions tell participants that leaving the tab is recorded.
 
 ## 7. Security notes
 

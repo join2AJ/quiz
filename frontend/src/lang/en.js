@@ -69,6 +69,13 @@ const en = {
   saveFailed: 'Not saved — check your connection',
   clearAnswer: 'Clear answer',
 
+  scenario: 'Situation',
+  suggestedTime: 'suggested {time}',
+  points: 'points',
+  dimensionScores: 'Strengths by area',
+  knowledgeAreas: 'Knowledge areas',
+  behaviourAreas: 'Behaviour areas',
+
   // Review
   reviewTitle: 'Review your answers',
   reviewHint: 'Click any row to go back to that question.',

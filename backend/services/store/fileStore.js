@@ -20,10 +20,10 @@ const x = require('../excelService');
 const { SHEETS, OPTIONS, str, normalizeUsername } = x;
 
 const APP_HEADERS = {
-  Users: ['Username', 'Name', 'PasswordHash', 'CreatedAt'],
+  Users: ['Username', 'Name', 'PasswordHash', 'CreatedAt', 'NameHi', 'Designation', 'Post', 'Shift', 'StaffId'],
   Exams: [
     'Id', 'Title', 'Team', 'Site', 'ExamDate', 'Instructions', 'InstructionsHi',
-    'UnlockDays', 'EstimatedMinutes', 'Status', 'FileName', 'Thresholds', 'CreatedAt',
+    'UnlockDays', 'EstimatedMinutes', 'Status', 'FileName', 'Thresholds', 'CreatedAt', 'Config',
   ],
   Assignments: ['ExamId', 'Username', 'AssignedAt'],
   Settings: ['Key', 'Value'],
@@ -72,8 +72,21 @@ function usersSync() {
     name: str(r.Name),
     passwordHash: str(r.PasswordHash),
     createdAt: str(r.CreatedAt),
+    nameHi: str(r.NameHi),
+    designation: str(r.Designation),
+    post: str(r.Post),
+    shift: str(r.Shift),
+    staffId: str(r.StaffId),
   }));
 }
+
+const PROFILE_FIELDS = [
+  ['nameHi', 'NameHi'],
+  ['designation', 'Designation'],
+  ['post', 'Post'],
+  ['shift', 'Shift'],
+  ['staffId', 'StaffId'],
+];
 
 async function getUsers() {
   return usersSync();
@@ -86,15 +99,16 @@ async function getUser(username) {
 
 async function upsertUsers(list) {
   const data = appRows('Users');
-  for (const { username, name, passwordHash } of list) {
-    const u = normalizeUsername(username);
-    const existing = data.find((r) => str(r.Username) === u);
-    if (existing) {
-      if (name) existing.Name = name;
-      if (passwordHash) existing.PasswordHash = passwordHash;
-    } else {
-      data.push({ Username: u, Name: name, PasswordHash: passwordHash, CreatedAt: new Date().toISOString() });
+  for (const user of list) {
+    const u = normalizeUsername(user.username);
+    let row = data.find((r) => str(r.Username) === u);
+    if (!row) {
+      row = { Username: u, Name: user.name, PasswordHash: user.passwordHash, CreatedAt: new Date().toISOString() };
+      data.push(row);
     }
+    if (user.name) row.Name = user.name;
+    if (user.passwordHash) row.PasswordHash = user.passwordHash;
+    for (const [k, col] of PROFILE_FIELDS) if (user[k] !== undefined) row[col] = user[k];
   }
   saveAppRows('Users', data);
 }
@@ -122,6 +136,7 @@ function examFromRow(r) {
     fileName: str(r.FileName),
     thresholds: { ...config.defaultThresholds, ...parseJson(r.Thresholds, {}) },
     createdAt: str(r.CreatedAt),
+    config: parseJson(r.Config, {}),
   };
 }
 
@@ -140,6 +155,7 @@ function examToRow(e) {
     FileName: e.fileName,
     Thresholds: JSON.stringify(e.thresholds || {}),
     CreatedAt: e.createdAt,
+    Config: JSON.stringify(e.config || {}),
   };
 }
 
@@ -301,9 +317,12 @@ async function getQuestionBank(exam) {
       category: str(r.Category),
       textEn: str(r['Question (EN)']),
       textHi: str(r['Question (HI)']),
+      scenarioEn: str(r['Scenario (EN)']),
+      scenarioHi: str(r['Scenario (HI)']),
       options: OPTIONS.map((o) => ({ key: o, en: str(r[`${o} (EN)`]), hi: str(r[`${o} (HI)`]) })),
       correct: str(k['Correct Option']).trim().toUpperCase(),
       explanation: str(k.Explanation),
+      ...x.questionMeta({ ...x.keyMetaFromRow(k), correct: k['Correct Option'] }),
     };
   });
   sections.sort((a, b) => a.no - b.no);
@@ -418,9 +437,62 @@ async function deleteAttempt(examId, username) {
   x.writeWorkbook(wb, attemptsPath(examId));
 }
 
+// ---------------------------------------------------------------- audit log
+// data/audit_log.jsonl, one entry per line. Each entry carries the SHA-256 of
+// the previous entry (tamper-evident chain). See services/auditService.js.
+
+const auditFile = () => path.join(config.dataDir, 'audit_log.jsonl');
+let auditTail = null; // { seq, hash } cache of the last entry
+
+function readAuditSync() {
+  let text = '';
+  try {
+    text = fs.readFileSync(auditFile(), 'utf8');
+  } catch {
+    return [];
+  }
+  return text.split('\n').filter(Boolean).map((l) => JSON.parse(l));
+}
+
+async function appendAudit(entry, hashEntry) {
+  ensureDirs();
+  if (!auditTail) {
+    const all = readAuditSync();
+    const last = all[all.length - 1];
+    auditTail = last ? { seq: last.seq, hash: last.hash } : { seq: 0, hash: '0'.repeat(64) };
+  }
+  const row = { ...entry, seq: auditTail.seq + 1, prev_hash: auditTail.hash };
+  row.hash = hashEntry(row);
+  fs.appendFileSync(auditFile(), `${JSON.stringify(row)}\n`);
+  auditTail = { seq: row.seq, hash: row.hash };
+}
+
+async function getAudit({ examId, username, event, limit, beforeSeq } = {}) {
+  let rows = readAuditSync();
+  if (examId) rows = rows.filter((r) => r.exam_id === examId);
+  if (username) rows = rows.filter((r) => r.username === username);
+  if (event) rows = rows.filter((r) => r.event === event);
+  if (beforeSeq) rows = rows.filter((r) => r.seq < beforeSeq);
+  rows.sort((a, b) => b.seq - a.seq);
+  return limit ? rows.slice(0, limit) : rows;
+}
+
+/** Every entry in chain order (for verification). */
+async function getAuditChain() {
+  return readAuditSync().sort((a, b) => a.seq - b.seq);
+}
+
 async function init() {
   ensureDirs();
   return { store: 'files', dataDir: config.dataDir };
+}
+
+// Used only by tests to simulate tampering.
+function _auditFilePath() {
+  return auditFile();
+}
+function _resetAuditCache() {
+  auditTail = null;
 }
 
 module.exports = {
@@ -454,4 +526,9 @@ module.exports = {
   getAttempt,
   saveAttempt,
   deleteAttempt,
+  appendAudit,
+  getAudit,
+  getAuditChain,
+  _auditFilePath,
+  _resetAuditCache,
 };

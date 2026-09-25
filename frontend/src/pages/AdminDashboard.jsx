@@ -6,6 +6,8 @@ import ExamEditor from '../components/admin/ExamEditor.jsx';
 import ExamDetail from '../components/admin/ExamDetail.jsx';
 import ParticipantsAdmin from '../components/admin/ParticipantsAdmin.jsx';
 import SettingsAdmin from '../components/admin/SettingsAdmin.jsx';
+import ImportAdmin from '../components/admin/ImportAdmin.jsx';
+import AuditAdmin from '../components/admin/AuditAdmin.jsx';
 
 /** Admin panel — English only. */
 export default function AdminDashboard() {
@@ -18,6 +20,8 @@ export default function AdminDashboard() {
         <nav className="admin-nav">
           <NavLink to="/admin" end>Exams</NavLink>
           <NavLink to="/admin/participants">Participants</NavLink>
+          <NavLink to="/admin/import">Import</NavLink>
+          <NavLink to="/admin/audit">Audit log</NavLink>
           <NavLink to="/admin/settings">Settings</NavLink>
         </nav>
         <main className="container wide">
@@ -28,6 +32,8 @@ export default function AdminDashboard() {
             <Route path="exams/:id/edit" element={<ExamEditor key="edit" />} />
             <Route path="participants" element={<ParticipantsAdmin />} />
             <Route path="settings" element={<SettingsAdmin />} />
+            <Route path="import" element={<ImportAdmin />} />
+            <Route path="audit" element={<AuditAdmin />} />
           </Routes>
         </main>
       </div>

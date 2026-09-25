@@ -5,9 +5,10 @@ export class ApiError extends Error {
   }
 }
 
-export async function api(path, { method = 'GET', body } = {}) {
+export async function api(path, { method = 'GET', body, keepalive = false } = {}) {
   const res = await fetch(`/api${path}`, {
     method,
+    keepalive,
     credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),

@@ -1,0 +1,392 @@
+{
+ "version": "1.0",
+ "generated_for": "Synthetic test fixture",
+ "ref": "TEST/001",
+ "staff_roster": [
+  {
+   "id": "T001",
+   "name": "Test One",
+   "name_hi": "परीक्षण एक",
+   "designation": "Executive",
+   "post": "PS-EX",
+   "shift": "A Shift",
+   "username": "test.one",
+   "role": "participant",
+   "initial_password": "Pass@One1"
+  },
+  {
+   "id": "T002",
+   "name": "Test Two",
+   "name_hi": "परीक्षण दो",
+   "designation": "Executive",
+   "post": "PS-EX",
+   "shift": "B Shift",
+   "username": "test.two",
+   "role": "participant",
+   "initial_password": "Pass@Two2"
+  },
+  {
+   "id": "ADM",
+   "name": "Admin",
+   "username": "admin",
+   "role": "admin",
+   "initial_password": "ignored"
+  }
+ ],
+ "questions": {
+  "knowledge": [
+   {
+    "id": "K01",
+    "section": "knowledge",
+    "type": "KNOWLEDGE",
+    "category": "Cap",
+    "difficulty": "easy",
+    "en": {
+     "question": "Knowledge Q1?",
+     "options": [
+      {
+       "letter": "A",
+       "text": "K1 option A",
+       "is_correct": false
+      },
+      {
+       "letter": "B",
+       "text": "K1 option B",
+       "is_correct": true
+      },
+      {
+       "letter": "C",
+       "text": "K1 option C",
+       "is_correct": false
+      },
+      {
+       "letter": "D",
+       "text": "K1 option D",
+       "is_correct": false
+      }
+     ]
+    },
+    "hi": {
+     "question": "ज्ञान प्र1?",
+     "options": [
+      {
+       "letter": "A",
+       "text": "K1 विकल्प A"
+      },
+      {
+       "letter": "B",
+       "text": "K1 विकल्प B"
+      },
+      {
+       "letter": "C",
+       "text": "K1 विकल्प C"
+      },
+      {
+       "letter": "D",
+       "text": "K1 विकल्प D"
+      }
+     ]
+    },
+    "answer_key": {
+     "correct_letter": "B",
+     "explanation_en": "B because.",
+     "explanation_hi": "B क्योंकि।"
+    },
+    "scoring": {
+     "dimension": "regulatory_knowledge",
+     "weight": 1
+    },
+    "analytics_tags": [
+     "cap"
+    ]
+   },
+   {
+    "id": "K02",
+    "section": "knowledge",
+    "type": "KNOWLEDGE",
+    "category": "Process",
+    "difficulty": "hard",
+    "en": {
+     "question": "Knowledge Q2?",
+     "options": [
+      {
+       "letter": "A",
+       "text": "K2 option A",
+       "is_correct": true
+      },
+      {
+       "letter": "B",
+       "text": "K2 option B",
+       "is_correct": false
+      },
+      {
+       "letter": "C",
+       "text": "K2 option C",
+       "is_correct": false
+      },
+      {
+       "letter": "D",
+       "text": "K2 option D",
+       "is_correct": false
+      }
+     ]
+    },
+    "hi": {
+     "question": "ज्ञान प्र2?",
+     "options": [
+      {
+       "letter": "A",
+       "text": "K2 विकल्प A"
+      },
+      {
+       "letter": "B",
+       "text": "K2 विकल्प B"
+      },
+      {
+       "letter": "C",
+       "text": "K2 विकल्प C"
+      },
+      {
+       "letter": "D",
+       "text": "K2 विकल्प D"
+      }
+     ]
+    },
+    "answer_key": {
+     "correct_letter": "A",
+     "explanation_en": "A because.",
+     "explanation_hi": "A क्योंकि।"
+    },
+    "scoring": {
+     "dimension": "process_knowledge",
+     "weight": 2
+    },
+    "analytics_tags": [
+     "sop"
+    ]
+   }
+  ],
+  "behaviour": [
+   {
+    "id": "B01",
+    "section": "behaviour",
+    "type": "BEHAVIOUR",
+    "category": "Pressure",
+    "difficulty": "medium",
+    "en": {
+     "question": "Behaviour Q1?",
+     "scenario": "You are alone.",
+     "options": [
+      {
+       "letter": "A",
+       "text": "B1 option A",
+       "is_correct": false
+      },
+      {
+       "letter": "B",
+       "text": "B1 option B",
+       "is_correct": false
+      },
+      {
+       "letter": "C",
+       "text": "B1 option C",
+       "is_correct": false
+      },
+      {
+       "letter": "D",
+       "text": "B1 option D",
+       "is_correct": true
+      }
+     ]
+    },
+    "hi": {
+     "question": "व्यवहार प्र1?",
+     "scenario": "आप अकेले हैं।",
+     "options": [
+      {
+       "letter": "A",
+       "text": "B1 विकल्प A"
+      },
+      {
+       "letter": "B",
+       "text": "B1 विकल्प B"
+      },
+      {
+       "letter": "C",
+       "text": "B1 विकल्प C"
+      },
+      {
+       "letter": "D",
+       "text": "B1 विकल्प D"
+      }
+     ]
+    },
+    "answer_key": {
+     "correct_letter": "D",
+     "preferred_options": [
+      "D",
+      "A"
+     ],
+     "concern_options": [
+      "C"
+     ],
+     "neutral_options": [
+      "B"
+     ],
+     "explanation_en": "D best.",
+     "explanation_hi": "D सर्वोत्तम।"
+    },
+    "reveal_map": {
+     "A": "Firm",
+     "B": "Avoidant",
+     "C": "CONCERN: false promise",
+     "D": "PREFERRED"
+    },
+    "scoring": {
+     "dimension": "anger_threshold",
+     "weight": 2
+    },
+    "analytics_tags": [
+     "pressure"
+    ]
+   },
+   {
+    "id": "B02",
+    "section": "behaviour",
+    "type": "BEHAVIOUR",
+    "category": "Peers",
+    "difficulty": "medium",
+    "en": {
+     "question": "Behaviour Q2?",
+     "scenario": "A colleague asks.",
+     "options": [
+      {
+       "letter": "A",
+       "text": "B2 option A",
+       "is_correct": true
+      },
+      {
+       "letter": "B",
+       "text": "B2 option B",
+       "is_correct": false
+      },
+      {
+       "letter": "C",
+       "text": "B2 option C",
+       "is_correct": false
+      },
+      {
+       "letter": "D",
+       "text": "B2 option D",
+       "is_correct": true
+      }
+     ]
+    },
+    "hi": {
+     "question": "व्यवहार प्र2?",
+     "scenario": "एक सहकर्मी पूछता है।",
+     "options": [
+      {
+       "letter": "A",
+       "text": "B2 विकल्प A"
+      },
+      {
+       "letter": "B",
+       "text": "B2 विकल्प B"
+      },
+      {
+       "letter": "C",
+       "text": "B2 विकल्प C"
+      },
+      {
+       "letter": "D",
+       "text": "B2 विकल्प D"
+      }
+     ]
+    },
+    "answer_key": {
+     "correct_letter": "D",
+     "preferred_options": [
+      "D",
+      "A"
+     ],
+     "concern_options": [
+      "C"
+     ],
+     "neutral_options": [
+      "B"
+     ],
+     "explanation_en": "A and D good.",
+     "explanation_hi": "A और D अच्छे।"
+    },
+    "reveal_map": {
+     "A": "Solution",
+     "B": "Procedural",
+     "C": "CONCERN: bypass",
+     "D": "Listens"
+    },
+    "scoring": {
+     "dimension": "peer_relations",
+     "weight": 3
+    },
+    "analytics_tags": [
+     "peers"
+    ]
+   }
+  ],
+  "total_knowledge": 2,
+  "total_behaviour": 2
+ },
+ "remarks_config": {
+  "thresholds": [
+   {
+    "condition": "total_pct >= 85",
+    "remark_en": "Rule one.",
+    "remark_hi": "नियम एक।"
+   },
+   {
+    "condition": "total_pct >= 50 and knowledge_pct >= behaviour_pct + 20",
+    "remark_en": "Rule two: knowledge ahead.",
+    "remark_hi": "नियम दो।"
+   },
+   {
+    "condition": "total_pct < 50",
+    "remark_en": "Rule three.",
+    "remark_hi": "नियम तीन।"
+   }
+  ]
+ },
+ "scoring_dimensions": {
+  "knowledge": {
+   "regulatory_knowledge": {
+    "label": "Regulatory Knowledge",
+    "label_hi": "नियामक ज्ञान",
+    "max_weight": 1
+   },
+   "process_knowledge": {
+    "label": "Process & SOP Knowledge",
+    "label_hi": "प्रक्रिया ज्ञान",
+    "max_weight": 2
+   }
+  },
+  "behaviour": {
+   "anger_threshold": {
+    "label": "Composure Under Pressure",
+    "label_hi": "दबाव में संयम",
+    "max_weight": 2
+   },
+   "peer_relations": {
+    "label": "Peer Relationship Management",
+    "label_hi": "सहकर्मी संबंध",
+    "max_weight": 3
+   }
+  }
+ },
+ "system_config": {
+  "result_unlock_days": 10,
+  "timer_per_question_seconds": {
+   "knowledge": 30,
+   "behaviour": 45
+  }
+ }
+}
