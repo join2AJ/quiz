@@ -9,6 +9,8 @@ const scoring = require('./scoringService');
 
 // An answer chosen faster than this is too quick to have read the question.
 const TOO_FAST_SECONDS = 5;
+// Averaging less than this per question is noted as "very quick".
+const QUICK_AVG_SECONDS = 8;
 const round = (n) => Math.round(n);
 
 function label(pctValue) {
@@ -37,9 +39,12 @@ function engagement(rows, exam) {
   const share = answered.length ? tooFast / answered.length : 0;
   let level;
   let text;
-  if (share >= 0.4 || avg < 6) {
+  if (share >= 0.4) {
     level = 'rushed';
     text = `Rushed — ${tooFast} of ${answered.length} answers were chosen in under ${TOO_FAST_SECONDS} seconds, too fast to read the question. Treat these results with caution.`;
+  } else if (avg < QUICK_AVG_SECONDS) {
+    level = 'quick';
+    text = `Very quick — about ${round(avg)} seconds per question on average (${round(actual / 60)} min in total; about ${round(suggested / 60)} min suggested). May not have read every question carefully.`;
   } else if (share >= 0.15) {
     level = 'mixed';
     text = `Mostly careful, but ${tooFast} answers were chosen in under ${TOO_FAST_SECONDS} seconds.`;
@@ -139,7 +144,15 @@ function individual({ result, rows, summary, bank, exam }) {
   if (kRows.length) bits.push(`Knowledge of the rules is ${label(result.knowledgePct)}${wrongTopics.length ? `, with gaps in ${list(wrongTopics, 3)}` : ''}.`);
   if (posture) bits.push(`In workplace situations the pattern is "${posture.label.toLowerCase()}"${concerns.length ? `, including ${concerns.length} answer(s) that are a concern` : ''}.`);
   if (strongValues.length || weakValues.length) bits.push(`${strongValues.length ? `Values shown: ${list(strongValues, 3)}.` : ''}${weakValues.length ? ` Values to develop: ${list(weakValues, 3)}.` : ''}`.trim());
-  bits.push(eng.level === 'rushed' ? 'Answers were given very quickly, so the result may not reflect real ability.' : eng.level === 'mixed' ? 'Some answers were given very quickly.' : 'The exam was taken carefully.');
+  bits.push(
+    eng.level === 'rushed'
+      ? 'Answers were given too fast to read, so the result may not reflect real ability.'
+      : eng.level === 'quick'
+        ? 'The exam was done very quickly overall.'
+        : eng.level === 'mixed'
+          ? 'Some answers were given very quickly.'
+          : 'The exam was taken carefully.',
+  );
   const headline = eng.level === 'rushed' ? 'Result unreliable — rushed' : concerns.length >= 3 ? 'Needs attention' : result.totalPct >= 80 ? 'Strong performer' : result.totalPct >= 60 ? 'On track' : 'Needs development';
 
   return { headline, paragraph: bits.join(' '), answers, engagement: eng, rank, of: summary.length };
@@ -178,11 +191,13 @@ function team({ analytics, summary, responses, bank, exam, assigned, reports }) 
   }
   const topConcerns = [...concernTally.values()].sort((a, b) => b.count - a.count).slice(0, 3);
   const rushed = people.filter((p) => p.eng.level === 'rushed');
+  const quick = people.filter((p) => p.eng.level === 'quick');
   const tabbers = people.filter((p) => p.tabs >= 3);
   const attention = people
     .map((p) => {
       const why = [];
       if (p.eng.level === 'rushed') why.push('rushed answers');
+      if (p.eng.level === 'quick') why.push(`very quick (${p.eng.avgSeconds}s per question)`);
       if (p.pct < 50) why.push(`low score (${p.pct}%)`);
       if (p.posture && p.posture.counts.concern >= 3) why.push(`${p.posture.counts.concern} concern answers`);
       if (p.tabs >= 3) why.push(`left the exam tab ${p.tabs} times`);
@@ -212,7 +227,7 @@ function team({ analytics, summary, responses, bank, exam, assigned, reports }) 
     },
     {
       q: 'Did people take it seriously?',
-      a: `${rushed.length ? `${rushed.length} person(s) rushed (${list(rushed.map((p) => p.name), 5)}) — their results are unreliable.` : 'Nobody rushed.'} ${tabbers.length ? `${tabbers.length} left the exam tab 3+ times (${list(tabbers.map((p) => p.name), 5)}).` : 'No repeated tab switching.'}`,
+      a: `${rushed.length ? `${rushed.length} person(s) rushed (${list(rushed.map((p) => p.name), 5)}) — their results are unreliable.` : 'Nobody rushed.'}${quick.length ? ` ${quick.length} finished very quickly (${list(quick.map((p) => `${p.name} ~${p.eng.avgSeconds}s/question`), 5)}).` : ''} ${tabbers.length ? `${tabbers.length} left the exam tab 3+ times (${list(tabbers.map((p) => p.name), 5)}).` : 'No repeated tab switching.'}`,
     },
     {
       q: 'Who needs attention?',
@@ -236,4 +251,4 @@ function team({ analytics, summary, responses, bank, exam, assigned, reports }) 
   return { paragraph, answers };
 }
 
-module.exports = { individual, team, engagement, withBestAnswers, TOO_FAST_SECONDS };
+module.exports = { individual, team, engagement, withBestAnswers, TOO_FAST_SECONDS, QUICK_AVG_SECONDS };
