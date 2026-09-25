@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { NavLink, Route, Routes } from 'react-router-dom';
 import { LanguageProvider } from '../context/LanguageContext.jsx';
 import TopBar from '../components/TopBar.jsx';
@@ -10,6 +11,26 @@ import ImportAdmin from '../components/admin/ImportAdmin.jsx';
 import AuditAdmin from '../components/admin/AuditAdmin.jsx';
 
 /** Admin panel — English only. */
+/** Shows the server's configuration problem (e.g. a wrong Supabase key) to the admin. */
+function HealthBanner() {
+  const [problem, setProblem] = useState(null);
+  useEffect(() => {
+    fetch('/api/health', { credentials: 'same-origin' })
+      .then((r) => r.json())
+      .then((d) => setProblem(d.ok ? null : d.error || 'The server is not configured correctly.'))
+      .catch(() => setProblem('Cannot reach the server.'));
+  }, []);
+  if (!problem) return null;
+  return (
+    <div className="container wide" style={{ paddingBottom: 0 }}>
+      <div className="alert alert-error" role="alert">
+        <strong>Setup problem:</strong> {problem}
+        <div className="small">After changing environment variables in Netlify, trigger a new deploy.</div>
+      </div>
+    </div>
+  );
+}
+
 export default function AdminDashboard() {
   return (
     <LanguageProvider forceLang="en">
@@ -24,6 +45,7 @@ export default function AdminDashboard() {
           <NavLink to="/admin/audit">Audit log</NavLink>
           <NavLink to="/admin/settings">Settings</NavLink>
         </nav>
+        <HealthBanner />
         <main className="container wide">
           <Routes>
             <Route index element={<ExamList />} />

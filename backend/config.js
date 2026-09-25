@@ -3,6 +3,13 @@ const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '..', '.env'), quiet: true });
 require('dotenv').config({ path: path.join(__dirname, '.env'), quiet: true });
 
+function unquote(v) {
+  return String(v || '')
+    .trim()
+    .replace(/^(['"])(.*)\1$/, '$2')
+    .trim();
+}
+
 const DATA_DIR = path.resolve(process.env.DATA_DIR || path.join(__dirname, 'data'));
 
 const config = {
@@ -16,8 +23,9 @@ const config = {
   adminUsername: 'admin',
   adminPassword: process.env.ADMIN_PASSWORD || '',
   sessionSecret: process.env.SESSION_SECRET || '',
-  supabaseUrl: (process.env.SUPABASE_URL || '').trim().replace(/\/+$/, ''),
-  supabaseKey: (process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim(),
+  // Tolerate values pasted with surrounding quotes/spaces, or with a trailing /rest/v1.
+  supabaseUrl: unquote(process.env.SUPABASE_URL).replace(/\/+$/, '').replace(/\/rest\/v1$/, ''),
+  supabaseKey: unquote(process.env.SUPABASE_SERVICE_ROLE_KEY).replace(/^Bearer\s+/i, ''),
   // Netlify Functions / AWS Lambda: no persistent disk, one request at a time per instance.
   isServerless: !!(process.env.NETLIFY || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.LAMBDA_TASK_ROOT),
   dataDir: DATA_DIR,

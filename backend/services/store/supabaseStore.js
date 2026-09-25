@@ -22,9 +22,78 @@ function db() {
   return client;
 }
 
+/** Decode a JWT payload without verifying it (only to explain configuration mistakes). */
+function jwtPayload(token) {
+  const parts = String(token).split('.');
+  if (parts.length !== 3) return null;
+  try {
+    return JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function projectRef(url) {
+  const m = /^https:\/\/([a-z0-9]+)\.supabase\.(co|in)/i.exec(url);
+  return m ? m[1].toLowerCase() : null;
+}
+
+/**
+ * Configuration problems we can spot without calling Supabase (wrong kind of
+ * key, key from another project, a URL that is not the project URL).
+ */
+function configProblem() {
+  const url = config.supabaseUrl;
+  const key = config.supabaseKey;
+  if (!/^https?:\/\//.test(url)) return `SUPABASE_URL must look like https://<project>.supabase.co (got "${url.slice(0, 60)}").`;
+  if (/supabase\.com\/dashboard/.test(url)) {
+    return 'SUPABASE_URL is the dashboard address. Use the Project URL from Project Settings → API (https://<project>.supabase.co).';
+  }
+  if (key.startsWith('sb_publishable_')) {
+    return 'SUPABASE_SERVICE_ROLE_KEY is the publishable (public) key. Use the secret key: Project Settings → API Keys → Secret keys (sb_secret_…), or the legacy service_role key.';
+  }
+  if (key.startsWith('sb_secret_')) return null;
+  const payload = jwtPayload(key);
+  if (!payload) {
+    return 'SUPABASE_SERVICE_ROLE_KEY is not an API key. It looks like the JWT Secret or a partial copy. Copy the service_role key (a long value starting with "eyJ") or a secret key (sb_secret_…) from Project Settings → API Keys.';
+  }
+  if (payload.role === 'anon') {
+    return 'SUPABASE_SERVICE_ROLE_KEY is the anon (public) key. Copy the service_role key instead (Project Settings → API Keys → Legacy API keys → service_role → Reveal).';
+  }
+  if (payload.role && payload.role !== 'service_role') {
+    return `SUPABASE_SERVICE_ROLE_KEY has role "${payload.role}". It must be the service_role key.`;
+  }
+  const ref = projectRef(url);
+  if (ref && payload.ref && payload.ref !== ref) {
+    return `SUPABASE_SERVICE_ROLE_KEY belongs to project "${payload.ref}", but SUPABASE_URL is project "${ref}". Use the URL and key of the same project.`;
+  }
+  return null;
+}
+
+/** Turn a Supabase/PostgREST error into a message an admin can act on. */
+function explain(error) {
+  const msg = String((error && error.message) || error || '');
+  const code = error && error.code;
+  if (/invalid api key|jwt|jws|no api key|apikey|unauthorized|legacy api keys are disabled/i.test(msg)) {
+    return { status: 503, message: `Supabase rejected the key (${msg}). ${configProblem() || 'Check that SUPABASE_SERVICE_ROLE_KEY is the service_role / secret key of the same project as SUPABASE_URL, then redeploy.'}` };
+  }
+  if (code === '42P01' || code === 'PGRST205' || /does not exist|could not find the table|schema cache/i.test(msg)) {
+    return { status: 503, message: `Database tables are missing or out of date (${msg}). Run supabase/schema.sql in the Supabase SQL Editor.` };
+  }
+  if (code === '42703' || /column .* does not exist|could not find the .* column/i.test(msg)) {
+    return { status: 503, message: `The database is missing new columns (${msg}). Run supabase/schema.sql again in the Supabase SQL Editor.` };
+  }
+  if (/fetch failed|ENOTFOUND|ECONNREFUSED|getaddrinfo|network/i.test(msg)) {
+    return { status: 503, message: `Cannot reach Supabase at ${config.supabaseUrl} (${msg}). Check SUPABASE_URL and that the project is not paused.` };
+  }
+  return { status: 500, message: `Database error: ${msg}` };
+}
+
 function check({ data, error }) {
   if (error) {
-    const err = new Error(`Database error: ${error.message}`);
+    const { status, message } = explain(error);
+    const err = new Error(message);
+    err.status = status;
     err.cause = error;
     throw err;
   }
@@ -450,16 +519,26 @@ async function getAuditChain() {
 }
 
 async function init() {
-  // Fails fast with a readable message if the schema has not been created.
-  const { error } = await db().from('psq_settings').select('key').limit(1);
-  if (error) {
-    const err = new Error(
-      `Supabase is configured but the tables are missing or unreachable (${error.message}). Run supabase/schema.sql in the Supabase SQL Editor.`,
-    );
+  const problem = configProblem();
+  if (problem) {
+    const err = new Error(problem);
     err.status = 503;
     throw err;
   }
-  return { store: 'supabase' };
+  // Touch the newest table and column so an outdated schema is reported too.
+  let result;
+  try {
+    result = await db().from('psq_audit_log').select('seq').limit(1);
+  } catch (e) {
+    result = { error: e };
+  }
+  if (result.error) {
+    const { message } = explain(result.error);
+    const err = new Error(message);
+    err.status = 503;
+    throw err;
+  }
+  return { store: 'supabase', project: projectRef(config.supabaseUrl) || config.supabaseUrl };
 }
 
 module.exports = {
