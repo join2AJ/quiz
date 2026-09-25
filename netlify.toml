@@ -1,0 +1,10 @@
+# Netlify hosts only the React frontend. The Express API (which stores the
+# Excel files) must run on a Node host with a persistent disk (Railway/Render)
+# — set BACKEND_URL in Netlify to that server's URL, e.g. https://psq.up.railway.app
+[build]
+  base = "frontend"
+  command = "npm run build && node netlify-redirects.mjs"
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "22"

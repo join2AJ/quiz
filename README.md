@@ -157,6 +157,27 @@ lost on every redeploy or restart. Always download the Excel files regularly as 
 
 Any other Node host works the same way: `npm install && npm run build`, then `npm start`.
 
+### Netlify (frontend only) + Railway/Render (backend)
+
+Netlify serves static files only. It cannot run the Express server or keep the Excel files, so the
+backend **must** run on Railway or Render as described above. Netlify can host the frontend and
+forward `/api/*` to the backend.
+
+1. Deploy the backend on Railway or Render first (steps above) and note its URL, e.g.
+   `https://pass-section-quiz.up.railway.app`. Add the variable `TRUST_PROXY=2` there.
+2. In Netlify, import this repo. `netlify.toml` already sets the build: base directory `frontend`,
+   command `npm run build && node netlify-redirects.mjs`, publish directory `dist`.
+3. In Netlify, go to **Site configuration → Environment variables** and add
+   `BACKEND_URL = https://pass-section-quiz.up.railway.app` (your backend URL, without a trailing slash).
+4. Trigger a new deploy. The build writes `dist/_redirects` so that:
+   - `/api/*` is proxied to the backend (login cookies keep working because the browser only sees
+     your Netlify domain), and
+   - every other path serves `index.html`, so links like `/admin/exams/...` don't return
+     "Page not found".
+
+If the login page says **"Cannot reach the server"**, `BACKEND_URL` is missing or wrong, or the
+backend is not running.
+
 ## 7. Security notes
 
 - The answer key is stored in the exam workbook and read only by the scoring code on the server.
@@ -189,6 +210,7 @@ pass-section-quiz/
 │   ├── data/                 Excel files (runtime; git-ignored)
 │   ├── test/                 API tests (node --test)
 │   └── server.js
+├── netlify.toml              Netlify build (frontend only; proxies /api to the backend)
 ├── .env.example
 └── package.json
 ```

@@ -40,7 +40,9 @@ export default function Login() {
       const u = await login(username, password);
       navigate(await routeFor(u), { replace: true });
     } catch (err) {
-      setError(err.status === 429 ? t('tooManyAttempts') : t('invalidCredentials'));
+      if (err.status === 429) setError(t('tooManyAttempts'));
+      else if (err.status === 401 || err.status === 400) setError(t('invalidCredentials'));
+      else setError(t('serverUnavailable')); // network error, 404 (no API behind this site) or 5xx
     } finally {
       setBusy(false);
     }

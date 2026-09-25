@@ -11,6 +11,7 @@ const en = {
   signingIn: 'Signing in…',
   invalidCredentials: 'Invalid credentials',
   tooManyAttempts: 'Too many attempts. Please try again later.',
+  serverUnavailable: 'Cannot reach the server. Please try again later or contact your administrator.',
 
   // Common
   logout: 'Log out',

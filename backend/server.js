@@ -21,7 +21,9 @@ excel.ensureDirs();
 
 const app = express();
 app.disable('x-powered-by');
-if (config.isProduction) app.set('trust proxy', 1);
+// Number of proxies in front of the app (1 = the host's load balancer; 2 when
+// Netlify also proxies /api). Needed so req.ip is the visitor's real IP.
+app.set('trust proxy', config.trustProxy);
 
 app.use(express.json({ limit: '3mb' }));
 app.use(

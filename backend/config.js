@@ -10,6 +10,7 @@ const config = {
   isProduction: process.env.NODE_ENV === 'production',
   // HTTPS-only cookies in production; set COOKIE_SECURE=false to run over plain HTTP (e.g. a LAN IP).
   cookieSecure: process.env.NODE_ENV === 'production' && process.env.COOKIE_SECURE !== 'false',
+  trustProxy: process.env.TRUST_PROXY !== undefined ? Number(process.env.TRUST_PROXY) : process.env.NODE_ENV === 'production' ? 1 : 0,
   adminUsername: 'admin',
   adminPassword: process.env.ADMIN_PASSWORD || '',
   sessionSecret: process.env.SESSION_SECRET || '',
