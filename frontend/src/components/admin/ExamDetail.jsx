@@ -173,7 +173,7 @@ function ParticipantsTab({ exam, participants, reload, onView }) {
                   <td className="small hide-sm">{[p.designation, p.shift].filter(Boolean).join(' · ')}</td>
                   <td>{statusBadge(p)}</td>
                   <td className="small">{p.submittedAt ? new Date(p.submittedAt).toLocaleString() : '—'}</td>
-                  <td className="num">{p.totalPct !== null ? `${p.totalPct}%` : '—'}</td>
+                  <td className="num"><PctChip value={p.totalPct} /></td>
                   <td className="row-actions nowrap">
                     {p.status === 'submitted' && (
                       <button type="button" className="btn btn-ghost btn-sm" onClick={() => onView(p)}>Summary</button>
@@ -263,6 +263,7 @@ function AnalyticsTab({ examId }) {
   const [a, setA] = useState(null);
   const [error, setError] = useState('');
   const [teamSummary, setTeamSummary] = useState(null);
+  const [allTags, setAllTags] = useState(false);
   useEffect(() => {
     api(`/admin/exams/${examId}/analytics`)
       .then((d) => {
@@ -335,7 +336,7 @@ function AnalyticsTab({ examId }) {
             return (
               <div key={g || 'other'} className="dimension-group">
                 {g && <h3>{g === 'KNOWLEDGE' ? 'Knowledge' : 'Behaviour'}</h3>}
-                {list.map((d) => <ScoreBar key={d.key} label={d.label} value={d.average} />)}
+                {list.map((d) => <ScoreBar key={d.key} label={d.label} value={d.average} colored />)}
               </div>
             );
           })}
@@ -359,13 +360,13 @@ function AnalyticsTab({ examId }) {
                   <tr key={p.username}>
                     <td>{p.name}</td>
                     <td><span className={`badge posture-${p.level}`}>{p.label}</span></td>
-                    <td className="num">{p.alignment}%</td>
+                    <td className="num"><PctChip value={p.alignment} /></td>
                     <td className="num">{p.counts.correct}</td>
                     <td className="num">{p.counts.acceptable}</td>
                     <td className="num">{p.counts.neutral}</td>
-                    <td className={`num ${p.counts.concern ? 'kind-concern' : ''}`}>{p.counts.concern}</td>
-                    <td className="small">{p.strengths.join(', ') || '—'}</td>
-                    <td className="small">{p.development.join(', ') || '—'}</td>
+                    <td className="num">{p.counts.concern ? <Chip tone={p.counts.concern >= 3 ? 'bad' : 'warn'}>{p.counts.concern}</Chip> : <span className="muted">0</span>}</td>
+                    <td className="small text-good">{p.strengths.join(', ') || '—'}</td>
+                    <td className="small text-warn">{p.development.join(', ') || '—'}</td>
                   </tr>
                 ))}
               </tbody>
@@ -377,12 +378,19 @@ function AnalyticsTab({ examId }) {
       )}
       {a.tags && a.tags.length > 0 && (
         <div className="card">
-          <h3>Performance by tag</h3>
+          <div className="results-head">
+            <h3 className="section-title">Performance by tag <span className="muted small">— weakest first</span></h3>
+            {a.tags.length > 10 && (
+              <button type="button" className="btn btn-ghost btn-sm" onClick={() => setAllTags((v) => !v)}>
+                {allTags ? 'Show weakest 10' : `Show all ${a.tags.length} tags`}
+              </button>
+            )}
+          </div>
           <table className="table table-compact">
             <thead><tr><th>Tag</th><th className="num">Questions</th><th className="num">Average score</th><th>Question IDs</th></tr></thead>
             <tbody>
-              {a.tags.map((t) => (
-                <tr key={t.tag}><td>#{t.tag}</td><td className="num">{t.questions.length}</td><td className="num">{t.average ?? '—'}{t.average !== null ? '%' : ''}</td><td className="small">{t.questions.join(', ')}</td></tr>
+              {[...a.tags].sort((x, y) => (x.average ?? 101) - (y.average ?? 101)).slice(0, allTags ? undefined : 10).map((t) => (
+                <tr key={t.tag}><td>#{t.tag}</td><td className="num">{t.questions.length}</td><td className="num"><PctChip value={t.average} /></td><td className="small">{t.questions.join(', ')}</td></tr>
               ))}
             </tbody>
           </table>
@@ -412,7 +420,7 @@ function AnalyticsTab({ examId }) {
                           <span className={`opt-bar ${o.kind === 'concern' ? 'concern' : ''}`} style={{ width: `${q.attempts ? (o.count / q.attempts) * 80 : 0}px` }} />
                           {o.count}
                         </td>
-                        <td className={`kind-${o.kind}`}>{KIND[o.kind] || '—'}</td>
+                        <td>{KIND_CHIP[o.kind] ? <Chip tone={KIND_CHIP[o.kind].tone}>{KIND[o.kind]}</Chip> : '—'}</td>
                         <td className="small">{o.interpretation}</td>
                       </tr>
                     ))}
@@ -434,7 +442,7 @@ function AnalyticsTab({ examId }) {
               <thead><tr><th>Participant</th><th>Q</th><th>Opt</th><th>What it reveals</th></tr></thead>
               <tbody>
                 {a.concerns.map((c) => (
-                  <tr key={`${c.username}-${c.no}`}><td>{c.name}</td><td>{c.qid || c.no}</td><td>{c.option}</td><td className="small">{c.interpretation}</td></tr>
+                  <tr key={`${c.username}-${c.no}`}><td className="nowrap">{c.name}</td><td><span className="mono qid">{c.qid || c.no}</span></td><td><b className="answer-letter answer-bad">{c.option}</b></td><td className="small">{c.interpretation}</td></tr>
                 ))}
               </tbody>
             </table>
@@ -449,7 +457,7 @@ function AnalyticsTab({ examId }) {
               {(a.integrity || []).map((r) => (
                 <tr key={r.username}>
                   <td>{r.name}</td>
-                  <td className={`num ${r.tabSwitches ? 'kind-concern' : ''}`}>{r.tabSwitches}</td>
+                  <td className="num">{r.tabSwitches ? <Chip tone={r.tabSwitches >= 3 ? 'bad' : 'warn'}>{r.tabSwitches}</Chip> : <span className="muted">0</span>}</td>
                   <td className="num mono">{r.timeAway}</td>
                   <td className="num">{r.answerChanges}</td>
                   <td className="num">{r.languageToggles}</td>
@@ -462,7 +470,7 @@ function AnalyticsTab({ examId }) {
       <div className="card">
         <h3>Section-wise average</h3>
         {a.sections.map((s) => (
-          <ScoreBar key={s.key} label={`${s.name} (high ${s.highest}%, low ${s.lowest}%)`} value={s.average} />
+          <ScoreBar key={s.key} label={`${s.name} (high ${s.highest}%, low ${s.lowest}%)`} value={s.average} colored />
         ))}
       </div>
       <div className="card">
@@ -480,7 +488,7 @@ function AnalyticsTab({ examId }) {
             <thead><tr><th>Q</th><th>Question</th><th className="num">Score</th></tr></thead>
             <tbody>
               {a.hardest.map((q) => (
-                <tr key={q.no}><td>{q.no}</td><td className="truncate">{q.text}</td><td className="num">{q.accuracy}%</td></tr>
+                <tr key={q.no}><td><span className="mono qid">{q.qid || q.no}</span></td><td className="truncate" title={q.text}>{q.text}</td><td className="num"><PctChip value={q.accuracy} /></td></tr>
               ))}
             </tbody>
           </table>
@@ -494,7 +502,7 @@ function AnalyticsTab({ examId }) {
               <thead><tr><th>Q</th><th>Question</th><th className="num">Flags</th></tr></thead>
               <tbody>
                 {a.mostFlagged.map((q) => (
-                  <tr key={q.no}><td>{q.no}</td><td className="truncate">{q.text}</td><td className="num">{q.flagged}</td></tr>
+                  <tr key={q.no}><td><span className="mono qid">{q.qid || q.no}</span></td><td className="truncate" title={q.text}>{q.text}</td><td className="num"><Chip tone="warn">{q.flagged}</Chip></td></tr>
                 ))}
               </tbody>
             </table>
@@ -507,7 +515,7 @@ function AnalyticsTab({ examId }) {
           <thead><tr><th>Q</th><th>Category</th><th className="num">Avg time (s)</th><th className="num">Avg changes</th><th className="num">Correct</th></tr></thead>
           <tbody>
             {a.questions.map((q) => (
-              <tr key={q.no}><td>{q.no}</td><td>{q.category}</td><td className="num">{q.avgTime}</td><td className="num">{q.avgChanges}</td><td className="num">{q.accuracy}%</td></tr>
+              <tr key={q.no}><td><span className="mono qid">{q.qid || q.no}</span></td><td>{q.category}</td><td className="num">{q.avgTime < 5 ? <Chip tone="bad">{q.avgTime}</Chip> : q.avgTime}</td><td className="num">{q.avgChanges}</td><td className="num"><PctChip value={q.accuracy} /></td></tr>
             ))}
           </tbody>
         </table>
@@ -518,7 +526,7 @@ function AnalyticsTab({ examId }) {
           <thead><tr><th>Rank</th><th>Name</th><th className="num">Score</th><th className="num">Time</th></tr></thead>
           <tbody>
             {a.ranking.map((r) => (
-              <tr key={r.username}><td>{r.rank}</td><td>{r.name}</td><td className="num">{r.totalPct}%</td><td className="num mono">{r.totalTime}</td></tr>
+              <tr key={r.username}><td className="muted">{r.rank}</td><td>{r.name}</td><td className="num"><PctChip value={r.totalPct} /></td><td className="num mono">{r.totalTime}</td></tr>
             ))}
           </tbody>
         </table>
@@ -625,6 +633,22 @@ function ResultModal({ exam, participant, onClose }) {
   const [d, setD] = useState(null);
   const [error, setError] = useState('');
   const [tab, setTab] = useState('summary');
+  const [printing, setPrinting] = useState(false);
+  useEffect(() => {
+    if (!printing) return undefined;
+    document.body.classList.add('print-modal');
+    const done = () => {
+      document.body.classList.remove('print-modal');
+      setPrinting(false);
+    };
+    window.addEventListener('afterprint', done, { once: true });
+    const t = setTimeout(() => window.print(), 50);
+    return () => {
+      clearTimeout(t);
+      window.removeEventListener('afterprint', done);
+      document.body.classList.remove('print-modal');
+    };
+  }, [printing]);
   useEffect(() => {
     api(`/admin/exams/${exam.id}/results/${encodeURIComponent(participant.username)}`)
       .then(setD)
@@ -648,7 +672,7 @@ function ResultModal({ exam, participant, onClose }) {
             ))}
           </div>
 
-          {tab === 'summary' && L && (
+          {(tab === 'summary' || printing) && L && (
             <LeaderCard
               title={participant.name}
               subtitle={[participant.designation, participant.shift, participant.username].filter(Boolean).join(' · ')}
@@ -670,7 +694,12 @@ function ResultModal({ exam, participant, onClose }) {
             />
           )}
 
-          {tab === 'answers' && <AnswerGroups responses={d.responses} />}
+          {(tab === 'answers' || printing) && (
+            <>
+              {printing && <h3 className="print-only">Every answer</h3>}
+              <AnswerGroups responses={d.responses} />
+            </>
+          )}
 
           {tab === 'behaviour' && d.posture && <PostureCard p={d.posture} compact />}
 
@@ -682,7 +711,10 @@ function ResultModal({ exam, participant, onClose }) {
           )}
         </div>
       )}
-      <div className="modal-actions"><button type="button" className="btn btn-secondary" onClick={onClose}>Close</button></div>
+      <div className="modal-actions">
+        {d && <button type="button" className="btn btn-ghost" onClick={() => setPrinting(true)} title="Summary and every answer, ready to print or save as PDF">Print / Save PDF</button>}
+        <button type="button" className="btn btn-secondary" onClick={onClose}>Close</button>
+      </div>
     </Modal>
   );
 }
