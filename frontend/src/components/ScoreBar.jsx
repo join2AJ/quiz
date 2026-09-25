@@ -1,8 +1,9 @@
-/** Horizontal meter for a single percentage. */
-export default function ScoreBar({ label, value }) {
+/** Horizontal meter for a single percentage. `colored` tints it green/amber/red. */
+export default function ScoreBar({ label, value, colored = false }) {
   const pct = Math.max(0, Math.min(100, Number(value) || 0));
+  const tone = pct >= 70 ? 'good' : pct >= 50 ? 'warn' : 'bad';
   return (
-    <div className="scorebar">
+    <div className={`scorebar${colored ? ` scorebar-${tone}` : ''}`}>
       <div className="scorebar-head">
         <span>{label}</span>
         <strong>{pct}%</strong>

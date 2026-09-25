@@ -21,6 +21,24 @@ function label(pctValue) {
   return 'weak';
 }
 
+/** Traffic-light tone for a percentage: good ≥70, warn 50–69, bad <50. */
+function tone(pctValue) {
+  if (pctValue === null || pctValue === undefined) return 'info';
+  if (pctValue >= 70) return 'good';
+  if (pctValue >= 50) return 'warn';
+  return 'bad';
+}
+
+const ENGAGEMENT_TONE = { careful: 'good', mixed: 'warn', quick: 'warn', rushed: 'bad' };
+
+function headlineFor(level, concernCount, pctValue) {
+  if (level === 'rushed') return 'Result unreliable — rushed';
+  if (concernCount >= 3) return 'Needs attention';
+  if (pctValue >= 80) return 'Strong performer';
+  if (pctValue >= 60) return 'On track';
+  return 'Needs development';
+}
+
 function list(items, max = 3) {
   const xs = items.filter(Boolean).slice(0, max);
   if (xs.length <= 1) return xs.join('');
@@ -66,7 +84,10 @@ function bestAnswer(bank, no) {
 function withBestAnswers(rows, bank) {
   return rows.map((r) => {
     const b = bestAnswer(bank, r['Question No']);
-    return b ? { ...r, 'Best Answer': b.letter, 'Best Answer Text': b.text, 'Also Accepted': b.acceptable.join(', ') } : r;
+    if (!b) return r;
+    const q = (bank.questions || []).find((x) => x.no === Number(r['Question No']));
+    const chosen = q && q.options.find((o) => o.key === r['Option Selected']);
+    return { ...r, 'Best Answer': b.letter, 'Best Answer Text': b.text, 'Also Accepted': b.acceptable.join(', '), 'Chosen Text': (chosen && chosen.en) || '' };
   });
 }
 
@@ -100,29 +121,39 @@ function individual({ result, rows, summary, bank, exam }) {
 
   const answers = [];
   answers.push({
+    key: 'overall',
+    tone: tone(result.totalPct),
     q: 'How did they do overall?',
     a: `${result.totalPct}% (${result.correct} of ${result.total} points) — ${label(result.totalPct)}.${rank ? ` Ranked ${rank} of ${summary.length} so far.` : ''}`,
   });
   if (kRows.length) {
     answers.push({
+      key: 'knowledge',
+      tone: tone(result.knowledgePct),
       q: 'Do they know the rules and procedures?',
       a: `Knowledge ${result.knowledgePct}% — ${label(result.knowledgePct)}.${wrongTopics.length ? ` Needs refresher on: ${list(wrongTopics, 4)}.` : ' No gaps found.'}${rightTopics.length && wrongTopics.length ? ` Knows well: ${list(rightTopics, 3)}.` : ''}`,
     });
   }
   if (posture) {
     answers.push({
+      key: 'situations',
+      tone: posture.counts.concern >= 3 ? 'bad' : tone(posture.alignment),
       q: 'How do they handle difficult situations?',
       a: `${posture.label} — chose the preferred response in ${posture.counts.correct} of ${posture.situations} situations${posture.counts.concern ? ` and a concern response in ${posture.counts.concern}` : ''}.${situational.length ? ` Strongest: ${list([...situational].sort((a, b) => b.pct - a.pct).map((d) => d.label), 2)}.` : ''}${posture.tendencies.length ? ` Tends to: ${list(posture.tendencies, 2).toLowerCase()}.` : ''}`,
     });
   }
   if (values.length) {
     answers.push({
+      key: 'values',
+      tone: weakValues.length ? (strongValues.length ? 'warn' : 'bad') : strongValues.length ? 'good' : 'info',
       q: 'Do they show our values (integrity, one team, respect…)?',
       a: `${strongValues.length ? `Shows ${list(strongValues, 3)}.` : 'No value area was clearly strong.'}${weakValues.length ? ` Weak on ${list(weakValues, 3)}.` : ''}`,
     });
   }
-  answers.push({ q: 'Did they take the exam seriously?', a: `${eng.text}${result.integrity && result.integrity.tabSwitches ? ` Left the exam tab ${result.integrity.tabSwitches} time(s).` : ''}` });
+  answers.push({ key: 'serious', tone: ENGAGEMENT_TONE[eng.level] || 'info', q: 'Did they take the exam seriously?', a: `${eng.text}${result.integrity && result.integrity.tabSwitches ? ` Left the exam tab ${result.integrity.tabSwitches} time(s).` : ''}` });
   answers.push({
+    key: 'worry',
+    tone: concerns.length >= 3 ? 'bad' : concerns.length ? 'warn' : 'good',
     q: 'Anything to worry about?',
     a: concerns.length
       ? `${concerns.length} concern answer(s): ${list(concerns.map((c) => `${c.qid} — ${String(c.interpretation).replace(/^(CRITICAL )?CONCERN:\s*/i, '')}`), 3)}.`
@@ -136,7 +167,7 @@ function individual({ result, rows, summary, bank, exam }) {
   else if (concerns.length === 1) actions.push(`discuss question ${concerns[0].qid} with them`);
   if (weakValues.length) actions.push(`coach on ${list(weakValues, 2)}`);
   if (!actions.length) actions.push(result.totalPct >= 80 ? 'recognise the result; consider them as a buddy or trainer for others' : 'keep supporting as usual');
-  answers.push({ q: 'What should the team lead do next?', a: `${actions.map((x, i) => (i ? x : x[0].toUpperCase() + x.slice(1))).join('; ')}.` });
+  answers.push({ key: 'next', tone: 'action', q: 'What should the team lead do next?', a: `${actions.map((x, i) => (i ? x : x[0].toUpperCase() + x.slice(1))).join('; ')}.` });
 
   // One paragraph.
   const bits = [];
@@ -153,9 +184,22 @@ function individual({ result, rows, summary, bank, exam }) {
           ? 'Some answers were given very quickly.'
           : 'The exam was taken carefully.',
   );
-  const headline = eng.level === 'rushed' ? 'Result unreliable — rushed' : concerns.length >= 3 ? 'Needs attention' : result.totalPct >= 80 ? 'Strong performer' : result.totalPct >= 60 ? 'On track' : 'Needs development';
+  const headline = headlineFor(eng.level, concerns.length, result.totalPct);
+  const stats = {
+    totalPct: result.totalPct,
+    knowledgePct: result.knowledgePct,
+    behaviourPct: result.behaviourPct,
+    alignment: posture ? posture.alignment : null,
+    concerns: concerns.length,
+    tabSwitches: (result.integrity && result.integrity.tabSwitches) || 0,
+    avgSeconds: eng.avgSeconds,
+    tooFast: eng.tooFast,
+    answered: eng.answered,
+  };
+  const strengths = [...rightTopics.slice(0, 4), ...strongValues.slice(0, 3)];
+  const gaps = [...wrongTopics.slice(0, 4), ...weakValues.slice(0, 3)];
 
-  return { headline, paragraph: bits.join(' '), answers, engagement: eng, rank, of: summary.length };
+  return { headline, paragraph: bits.join(' '), answers, engagement: eng, rank, of: summary.length, stats, strengths, gaps };
 }
 
 /** Team-level summary for the Analytics tab. */
@@ -173,7 +217,20 @@ function team({ analytics, summary, responses, bank, exam, assigned, reports }) 
   }
   const people = summary.map((s) => {
     const rows = byUser.get(s.Username) || [];
-    return { name: s.Name, pct: Number(s['Total Score %']) || 0, eng: engagement(rows, exam), posture: scoring.behaviourPosture(rows, exam), tabs: Number(s['Tab Switches']) || 0 };
+    const posture = scoring.behaviourPosture(rows, exam);
+    const eng = engagement(rows, exam);
+    const pct = Number(s['Total Score %']) || 0;
+    const concernCount = posture ? posture.counts.concern : Number(s['Concern Answers']) || 0;
+    return {
+      username: s.Username,
+      name: s.Name,
+      pct,
+      eng,
+      posture,
+      concerns: concernCount,
+      tabs: Number(s['Tab Switches']) || 0,
+      headline: headlineFor(eng.level, concernCount, pct),
+    };
   });
   const dims = [...(analytics.dimensions || [])].sort((a, b) => b.average - a.average);
   const hardest = [...analytics.questions].sort((a, b) => a.accuracy - b.accuracy).slice(0, 5).map((q) => {
@@ -201,39 +258,54 @@ function team({ analytics, summary, responses, bank, exam, assigned, reports }) 
       if (p.pct < 50) why.push(`low score (${p.pct}%)`);
       if (p.posture && p.posture.counts.concern >= 3) why.push(`${p.posture.counts.concern} concern answers`);
       if (p.tabs >= 3) why.push(`left the exam tab ${p.tabs} times`);
-      return why.length ? { name: p.name, why } : null;
+      return why.length ? { name: p.name, username: p.username, why, headline: p.headline } : null;
     })
     .filter(Boolean);
 
   const answers = [
     {
+      key: 'overall',
+      tone: tone(avg),
       q: 'How did the team do?',
       a: `${n} of ${assigned} people have submitted. Average ${avg}% (${label(avg)}). Highest ${best.name} ${best.pct}%, lowest ${worst.name} ${worst.pct}%.`,
     },
     {
+      key: 'strengths',
+      tone: 'info',
       q: 'Where is the team strong, and where weak?',
       a: dims.length
         ? `Strong: ${list(dims.slice(0, 3).map((d) => `${d.label} (${d.average}%)`), 3)}. Weak: ${list([...dims].reverse().slice(0, 3).map((d) => `${d.label} (${d.average}%)`), 3)}.`
         : 'Not enough data yet.',
     },
     {
+      key: 'hardest',
+      tone: hardest.length && hardest[0].accuracy < 50 ? 'warn' : 'info',
       q: 'Which questions did most people get wrong?',
       a: hardest.map((q) => `${q.qid || `Q${q.no}`} ${q.category} — ${q.accuracy}% scored${q.best ? `; correct answer ${q.best.letter}: “${q.best.text}”` : ''}`).join(' | '),
       list: hardest.map((q) => ({ id: q.qid || `Q${q.no}`, category: q.category, accuracy: q.accuracy, best: q.best })),
     },
     {
+      key: 'situations',
+      tone: topConcerns.length ? 'warn' : 'good',
       q: 'How does the team behave in difficult situations?',
       a: `${Object.entries(postureCounts).map(([k, v]) => `${v} × ${k}`).join(', ') || 'No behaviour data.'}${topConcerns.length ? `. Most common concern answers: ${list(topConcerns.map((c) => `${c.qid} ${c.category} (${c.count} people)`), 3)}.` : ''}`,
     },
     {
+      key: 'serious',
+      tone: rushed.length ? 'bad' : quick.length || tabbers.length ? 'warn' : 'good',
       q: 'Did people take it seriously?',
       a: `${rushed.length ? `${rushed.length} person(s) rushed (${list(rushed.map((p) => p.name), 5)}) — their results are unreliable.` : 'Nobody rushed.'}${quick.length ? ` ${quick.length} finished very quickly (${list(quick.map((p) => `${p.name} ~${p.eng.avgSeconds}s/question`), 5)}).` : ''} ${tabbers.length ? `${tabbers.length} left the exam tab 3+ times (${list(tabbers.map((p) => p.name), 5)}).` : 'No repeated tab switching.'}`,
     },
     {
+      key: 'attention',
+      tone: attention.length ? 'bad' : 'good',
       q: 'Who needs attention?',
       a: attention.length ? attention.map((x) => `${x.name}: ${x.why.join(', ')}`).join(' | ') : 'Nobody stands out.',
+      people: attention,
     },
     {
+      key: 'reports',
+      tone: reports.length ? 'warn' : 'good',
       q: 'Were any questions reported as wrong?',
       a: reports.length ? `${reports.length} report(s) — see the Reports tab.` : 'No reports.',
     },
@@ -248,7 +320,22 @@ function team({ analytics, summary, responses, bank, exam, assigned, reports }) 
   ]
     .filter(Boolean)
     .join(' ');
-  return { paragraph, answers };
+  const stats = {
+    submitted: n,
+    assigned,
+    average: avg,
+    best: best && { name: best.name, pct: best.pct },
+    worst: worst && { name: worst.name, pct: worst.pct },
+    rushed: rushed.length,
+    attention: attention.length,
+    concernAnswers: (analytics.concerns || []).length,
+    reports: reports.length,
+  };
+  const dimensions = dims.map((d) => ({ key: d.key, label: d.label, group: d.group, average: d.average }));
+  const roster = people
+    .map((p) => ({ username: p.username, name: p.name, pct: p.pct, level: p.eng.level, avgSeconds: p.eng.avgSeconds, concerns: p.concerns, tabs: p.tabs, headline: p.headline }))
+    .sort((a, b) => b.pct - a.pct);
+  return { paragraph, answers, stats, dimensions, people: roster };
 }
 
-module.exports = { individual, team, engagement, withBestAnswers, TOO_FAST_SECONDS, QUICK_AVG_SECONDS };
+module.exports = { individual, team, engagement, tone, headlineFor, withBestAnswers, TOO_FAST_SECONDS, QUICK_AVG_SECONDS };

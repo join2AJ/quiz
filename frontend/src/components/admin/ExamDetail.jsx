@@ -9,6 +9,9 @@ import { AddParticipantForm, CsvUpload } from './ParticipantForms.jsx';
 import QuestionBank from './QuestionBank.jsx';
 import TagsTab from './TagsTab.jsx';
 import FindReplace from './FindReplace.jsx';
+import {
+  AnswerBody, Chip, ENGAGEMENT, HEADLINE_TONE, InsightGrid, InsightItem, KIND_CHIP, Kpi, KpiRow, Legend, PctChip, toneOf,
+} from './Insights.jsx';
 
 const KIND = {
   correct: 'Full credit',
@@ -26,41 +29,58 @@ const KIND_CLASS = {
   Unanswered: 'incorrect',
 };
 
-const HEADLINE_CLASS = {
-  'Result unreliable — rushed': 'headline-rushed',
-  'Needs attention': 'headline-needs',
-  'Strong performer': 'headline-strong',
-  'On track': 'headline-track',
-  'Needs development': 'headline-dev',
-};
+const isWide = (x) => Boolean(x.list || (x.people && x.people.length));
 
-/** Plain-language summary for leaders: one paragraph and answers to the key questions. */
-function LeaderCard({ title, headline, paragraph, answers }) {
+/** Plain-language summary for leaders: headline, key numbers, one paragraph and colour-coded answers. */
+function LeaderCard({ title, subtitle, headline, paragraph, answers, kpis, strengths, gaps }) {
+  const lead = answers.filter((x) => x.key !== 'next');
+  const next = answers.find((x) => x.key === 'next');
   return (
-    <div className="card leader-card">
-      <div className="row-actions">
-        <h3 style={{ margin: 0 }}>{title}</h3>
-        {headline && <span className={`badge ${HEADLINE_CLASS[headline] || ''}`}>{headline}</span>}
-      </div>
-      <p style={{ marginBottom: 0 }}>{paragraph}</p>
-      <dl className="leader-qa">
-        {answers.map((x) => (
-          <div key={x.q}>
-            <dt>{x.q}</dt>
-            <dd>{x.list ? (
-              <ul style={{ margin: '0.2rem 0 0', paddingLeft: '1.1rem' }}>
-                {x.list.map((q) => (
-                  <li key={q.id}>
-                    <b>{q.id}</b> {q.category} — {q.accuracy}% scored
-                    {q.best && <span className="muted"> · correct answer <b>{q.best.letter}</b>: “{q.best.text}”</span>}
-                  </li>
-                ))}
-              </ul>
-            ) : x.a}</dd>
-          </div>
+    <section className={`leader-card leader-${HEADLINE_TONE[headline] || 'info'}`}>
+      <header className="leader-head">
+        <div>
+          <h3 className="leader-title">{title}</h3>
+          {subtitle && <div className="small muted">{subtitle}</div>}
+        </div>
+        {headline && <Chip tone={HEADLINE_TONE[headline] || 'info'} strong>{headline}</Chip>}
+      </header>
+      {kpis}
+      <p className="leader-para">{paragraph}</p>
+      {((strengths && strengths.length > 0) || (gaps && gaps.length > 0)) && (
+        <div className="sg-grid">
+          {strengths && strengths.length > 0 && (
+            <div>
+              <div className="sg-label sg-good">Strong in</div>
+              <div className="chip-row">{strengths.map((x) => <Chip key={x} tone="good">{x}</Chip>)}</div>
+            </div>
+          )}
+          {gaps && gaps.length > 0 && (
+            <div>
+              <div className="sg-label sg-bad">Needs work on</div>
+              <div className="chip-row">{gaps.map((x) => <Chip key={x} tone="warn">{x}</Chip>)}</div>
+            </div>
+          )}
+        </div>
+      )}
+      <InsightGrid>
+        {lead.filter((x) => !isWide(x)).map((x) => (
+          <InsightItem key={x.q} q={x.q} tone={x.tone || 'info'}>
+            <AnswerBody x={x} />
+          </InsightItem>
         ))}
-      </dl>
-    </div>
+      </InsightGrid>
+      {lead.filter(isWide).map((x) => (
+        <InsightItem key={x.q} q={x.q} tone={x.tone || 'info'}>
+          <AnswerBody x={x} />
+        </InsightItem>
+      ))}
+      {next && (
+        <div className="next-step">
+          <span className="next-step-label">Recommended next step</span>
+          <p>{next.a}</p>
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -173,43 +193,68 @@ function ParticipantsTab({ exam, participants, reload, onView }) {
   );
 }
 
-function ResultsTab({ participants, onView }) {
+function ResultsTab({ examId, participants, onView }) {
+  const [people, setPeople] = useState(null);
+  useEffect(() => {
+    api(`/admin/exams/${examId}/analytics`)
+      .then((d) => setPeople(new Map(((d.team && d.team.people) || []).map((p) => [p.username, p]))))
+      .catch(() => setPeople(new Map()));
+  }, [examId]);
   const done = participants.filter((p) => p.status === 'submitted');
   if (!done.length) return <p className="muted">No submissions yet.</p>;
   const sectionNos = [...new Set(done.flatMap((p) => p.sections.map((s) => s.no)))].sort((a, b) => a - b);
   const sectionName = (no) => (done.flatMap((p) => p.sections).find((s) => s.no === no) || {}).name;
   return (
-    <div className="table-wrap">
-      <table className="table">
-        <thead>
-          <tr>
-            <th>Name</th>
-            <th className="num">Correct</th>
-            <th className="num">Total %</th>
-            {sectionNos.map((n) => <th className="num" key={n}>S{n} {sectionName(n)} %</th>)}
-            <th className="num">Knowledge %</th>
-            <th className="num">Behaviour %</th>
-            <th className="num">Time</th>
-            <th>Unlocks</th>
-          </tr>
-        </thead>
-        <tbody>
-          {done
-            .sort((a, b) => b.totalPct - a.totalPct)
-            .map((p) => (
-              <tr key={p.username} className="clickable" onClick={() => onView(p)}>
-                <td>{p.name}</td>
-                <td className="num">{p.correct}/{p.total}</td>
-                <td className="num"><strong>{p.totalPct}%</strong></td>
-                {sectionNos.map((n) => <td className="num" key={n}>{(p.sections.find((s) => s.no === n) || {}).pct ?? '—'}</td>)}
-                <td className="num">{p.knowledgePct ?? '—'}</td>
-                <td className="num">{p.behaviourPct ?? '—'}</td>
-                <td className="num mono">{formatDuration(p.totalSeconds)}</td>
-                <td className="small">{p.unlocked ? 'Visible' : new Date(p.unlockAt).toLocaleDateString()}</td>
-              </tr>
-            ))}
-        </tbody>
-      </table>
+    <div className="stack">
+      <div className="results-head">
+        <p className="muted small" style={{ margin: 0 }}>Highest score first. Click a row for the full summary.</p>
+        <Legend />
+      </div>
+      <div className="table-wrap results-table">
+        <table className="table table-roomy">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Name</th>
+              <th>Verdict</th>
+              <th className="num">Score</th>
+              <th className="num">Knowledge</th>
+              <th className="num">Behaviour</th>
+              {sectionNos.map((n) => <th className="num hide-sm" key={n} title={sectionName(n)}>Part {n}<div className="th-sub">{sectionName(n)}</div></th>)}
+              <th>Seriousness</th>
+              <th className="num">Concerns</th>
+              <th className="num">Time</th>
+              <th>Result visible</th>
+            </tr>
+          </thead>
+          <tbody>
+            {[...done]
+              .sort((a, b) => b.totalPct - a.totalPct)
+              .map((p, i) => {
+                const x = people && people.get(p.username);
+                const eng = x && ENGAGEMENT[x.level];
+                return (
+                  <tr key={p.username} className={`clickable row-${x ? HEADLINE_TONE[x.headline] : 'none'}`} onClick={() => onView(p)}>
+                    <td className="muted">{i + 1}</td>
+                    <td>
+                      <div className="cell-name">{p.name}</div>
+                      <div className="small muted nowrap">{p.correct}/{p.total} points</div>
+                    </td>
+                    <td>{x ? <Chip tone={HEADLINE_TONE[x.headline] || 'info'}>{x.headline}</Chip> : <span className="muted">…</span>}</td>
+                    <td className="num"><PctChip value={p.totalPct} /></td>
+                    <td className="num"><PctChip value={p.knowledgePct} /></td>
+                    <td className="num"><PctChip value={p.behaviourPct} /></td>
+                    {sectionNos.map((n) => <td className="num hide-sm" key={n}><PctChip value={(p.sections.find((s) => s.no === n) || {}).pct} /></td>)}
+                    <td>{eng ? <Chip tone={eng.tone} title={`About ${x.avgSeconds}s per question`}>{eng.label}</Chip> : '—'}</td>
+                    <td className="num">{x ? (x.concerns ? <Chip tone={x.concerns >= 3 ? 'bad' : 'warn'}>{x.concerns}</Chip> : <span className="muted">0</span>) : '—'}</td>
+                    <td className="num mono">{formatDuration(p.totalSeconds)}</td>
+                    <td className="small">{p.unlocked ? <Chip tone="good">Visible</Chip> : new Date(p.unlockAt).toLocaleDateString()}</td>
+                  </tr>
+                );
+              })}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -232,7 +277,33 @@ function AnalyticsTab({ examId }) {
 
   return (
     <div className="stack">
-      {teamSummary && <LeaderCard title="Team summary" paragraph={teamSummary.paragraph} answers={teamSummary.answers} />}
+      {teamSummary && (
+        <LeaderCard
+          title="Team summary"
+          subtitle="Plain-language answers for leaders. Colours: green good, amber watch, red act."
+          paragraph={teamSummary.paragraph}
+          answers={teamSummary.answers}
+          kpis={teamSummary.stats && (
+            <KpiRow>
+              <Kpi label="Submitted" value={`${teamSummary.stats.submitted}/${teamSummary.stats.assigned}`} sub="people" tone={teamSummary.stats.submitted >= teamSummary.stats.assigned ? 'good' : 'info'} />
+              <Kpi label="Team average" value={`${teamSummary.stats.average}%`} tone={toneOf(teamSummary.stats.average)} sub={teamSummary.stats.best ? `High ${teamSummary.stats.best.pct}% · Low ${teamSummary.stats.worst.pct}%` : ''} />
+              <Kpi label="Need attention" value={teamSummary.stats.attention} sub="people" tone={teamSummary.stats.attention ? 'bad' : 'good'} />
+              <Kpi label="Rushed" value={teamSummary.stats.rushed} sub="unreliable results" tone={teamSummary.stats.rushed ? 'bad' : 'good'} />
+              <Kpi label="Concern answers" value={teamSummary.stats.concernAnswers} sub="across the team" tone={teamSummary.stats.concernAnswers ? 'warn' : 'good'} />
+              <Kpi label="Question reports" value={teamSummary.stats.reports} tone={teamSummary.stats.reports ? 'warn' : 'good'} />
+            </KpiRow>
+          )}
+        />
+      )}
+      {teamSummary && teamSummary.dimensions && teamSummary.dimensions.length > 0 && (
+        <section className="card">
+          <h3 className="section-title">Team strengths and weaknesses</h3>
+          <p className="muted small">Average score per quality, strongest first.</p>
+          <div className="dim-grid">
+            {teamSummary.dimensions.map((d) => <ScoreBar key={d.key} label={d.label} value={d.average} colored />)}
+          </div>
+        </section>
+      )}
       <details className="card">
         <summary><b>Detailed analytics</b> <span className="muted small">— charts, every question, behaviour patterns, individual profiles</span></summary>
       <div className="stack" style={{ marginTop: '1rem' }}>
@@ -458,15 +529,110 @@ function AnalyticsTab({ examId }) {
   );
 }
 
+function answerKind(r) {
+  if (!r['Option Selected'] || r['Option Selected'] === '—') return 'unanswered';
+  return KIND_CLASS[r['Response Type']] || (r['Correct Y/N'] === 'Y' ? 'correct' : 'incorrect');
+}
+
+function partName(section) {
+  return String(section || 'Questions').replace(/^Section\s+\d+\s+—\s+/, '');
+}
+
+/** Every answer, grouped by part, with colour-coded results. */
+function AnswerGroups({ responses }) {
+  const [filter, setFilter] = useState('all');
+  const groups = [];
+  for (const r of responses) {
+    const key = r.Section || 'Questions';
+    let g = groups.find((x) => x.key === key);
+    if (!g) groups.push((g = { key, rows: [] }));
+    g.rows.push(r);
+  }
+  const notBest = responses.filter((r) => answerKind(r) !== 'correct').length;
+  return (
+    <div className="stack">
+      <div className="results-head">
+        <div className="segmented" role="group" aria-label="Filter answers">
+          <button type="button" className={filter === 'all' ? 'on' : ''} onClick={() => setFilter('all')}>All answers ({responses.length})</button>
+          <button type="button" className={filter === 'review' ? 'on' : ''} onClick={() => setFilter('review')}>Not the best answer ({notBest})</button>
+        </div>
+        <span className="small muted"><Chip tone="bad">3s</Chip> = answered in under {TOO_FAST} seconds</span>
+      </div>
+      {groups.map((g) => {
+        const counts = {};
+        for (const r of g.rows) counts[answerKind(r)] = (counts[answerKind(r)] || 0) + 1;
+        const rows = filter === 'all' ? g.rows : g.rows.filter((r) => answerKind(r) !== 'correct');
+        const pct = Math.round(((counts.correct || 0) / g.rows.length) * 100);
+        return (
+          <details key={g.key} className="answer-group" open>
+            <summary>
+              <span className="answer-group-title">{partName(g.key)}</span>
+              <span className="chip-row">
+                <PctChip value={pct} suffix="% best" />
+                {Object.entries(KIND_CHIP).map(([k, v]) => (counts[k] ? <Chip key={k} tone={v.tone}>{counts[k]} {v.label.toLowerCase()}</Chip> : null))}
+              </span>
+            </summary>
+            {rows.length === 0 ? (
+              <p className="muted small answer-empty">All answers in this part were the best answer.</p>
+            ) : (
+              <ul className="answer-list">
+                {rows.map((r) => {
+                  const kind = answerKind(r);
+                  const chip = KIND_CHIP[kind];
+                  const secs = Number(r['Active Time on Question (seconds)'] ?? r['Time on Question (seconds)']) || 0;
+                  const answered = kind !== 'unanswered';
+                  return (
+                    <li key={r['Question No']} className={`answer-row answer-${chip.tone}`}>
+                      <div className="answer-main">
+                        <span className="mono qid">{r.QID || `Q${r['Question No']}`}</span>
+                        <span className="answer-topic">{r.Category || '—'}</span>
+                        <span className="chip-row answer-meta">
+                          <Chip tone={chip.tone} strong>{chip.label}</Chip>
+                          <span className="small muted">{r.Points ?? (r['Correct Y/N'] === 'Y' ? 1 : 0)}{r.Weight ? `/${r.Weight}` : ''} pts</span>
+                          <Chip tone={answered && secs < TOO_FAST ? 'bad' : 'muted'} title="Seconds spent on this question">{secs}s</Chip>
+                        </span>
+                      </div>
+                      <div className="answer-detail">
+                        {r['Question Text (EN)'] && <div className="answer-question">{r['Question Text (EN)']}</div>}
+                        <div>
+                          <span className="answer-label">Chose</span>
+                          <b className={`answer-letter answer-${chip.tone}`}>{answered ? r['Option Selected'] : '—'}</b>
+                          {r['Chosen Text'] && <span className="small">{r['Chosen Text']}</span>}
+                        </div>
+                        {kind !== 'correct' && r['Best Answer'] && (
+                          <div>
+                            <span className="answer-label">Best</span>
+                            <b className="answer-letter answer-good">{r['Best Answer']}</b>
+                            <span className="small">{r['Best Answer Text']}</span>
+                            {r['Also Accepted'] && <span className="small muted"> · also accepted {r['Also Accepted']}</span>}
+                          </div>
+                        )}
+                        {r.Interpretation && kind !== 'correct' && <div className="small answer-why">{r.Interpretation}</div>}
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </details>
+        );
+      })}
+    </div>
+  );
+}
+
 function ResultModal({ exam, participant, onClose }) {
   const [d, setD] = useState(null);
   const [error, setError] = useState('');
+  const [tab, setTab] = useState('summary');
   useEffect(() => {
     api(`/admin/exams/${exam.id}/results/${encodeURIComponent(participant.username)}`)
       .then(setD)
       .catch((e) => setError(e.message));
   }, [exam.id, participant.username]);
   const L = d && d.leadership;
+  const st = L && L.stats;
+  const eng = L && ENGAGEMENT[L.engagement.level];
   return (
     <Modal title={`${participant.name} — summary`} onClose={onClose}>
       {error && <div className="alert alert-error">{error}</div>}
@@ -474,56 +640,46 @@ function ResultModal({ exam, participant, onClose }) {
         <p className="muted">Loading…</p>
       ) : d && (
         <div className="stack modal-scroll">
-          {L && <LeaderCard title={`${participant.name}`} headline={L.headline} paragraph={L.paragraph} answers={L.answers} />}
+          <div className="tabs tabs-pill" role="tablist">
+            {[['summary', 'Summary'], ['answers', 'Every answer'], ['behaviour', 'Behaviour'], ['card', 'Score card']].map(([k, label]) => (
+              (k !== 'behaviour' || d.posture) && (
+                <button key={k} type="button" role="tab" aria-selected={tab === k} className={tab === k ? 'active' : ''} onClick={() => setTab(k)}>{label}</button>
+              )
+            ))}
+          </div>
 
-          <details>
-            <summary><b>Score card</b> <span className="muted small">— what the participant sees after the unlock date</span></summary>
-            <div style={{ marginTop: '0.75rem' }}><ResultCard exam={exam} result={d.result} /></div>
-          </details>
-
-          {d.posture && (
-            <details>
-              <summary><b>Behaviour details</b></summary>
-              <div style={{ marginTop: '0.75rem' }}><PostureCard p={d.posture} compact /></div>
-            </details>
+          {tab === 'summary' && L && (
+            <LeaderCard
+              title={participant.name}
+              subtitle={[participant.designation, participant.shift, participant.username].filter(Boolean).join(' · ')}
+              headline={L.headline}
+              paragraph={L.paragraph}
+              answers={L.answers}
+              strengths={L.strengths}
+              gaps={L.gaps}
+              kpis={st && (
+                <KpiRow>
+                  <Kpi label="Overall" value={`${st.totalPct}%`} tone={toneOf(st.totalPct)} sub={L.rank ? `Rank ${L.rank} of ${L.of}` : ''} />
+                  {st.knowledgePct !== null && st.knowledgePct !== undefined && <Kpi label="Knowledge" value={`${st.knowledgePct}%`} tone={toneOf(st.knowledgePct)} sub="rules & procedures" />}
+                  {st.behaviourPct !== null && st.behaviourPct !== undefined && <Kpi label="Behaviour" value={`${st.behaviourPct}%`} tone={toneOf(st.behaviourPct)} sub="situations & values" />}
+                  {eng && <Kpi label="Seriousness" value={eng.label} tone={eng.tone} sub={`~${st.avgSeconds}s per question`} />}
+                  <Kpi label="Concerns" value={st.concerns} tone={st.concerns >= 3 ? 'bad' : st.concerns ? 'warn' : 'good'} sub="answers" />
+                  <Kpi label="Left exam tab" value={st.tabSwitches} tone={st.tabSwitches >= 3 ? 'bad' : st.tabSwitches ? 'warn' : 'good'} sub="times" />
+                </KpiRow>
+              )}
+            />
           )}
 
-          <details open>
-            <summary><b>Every answer</b> <span className="muted small">— with the correct answer where theirs was not the best; red time = under {TOO_FAST} s</span></summary>
-            <div className="table-wrap" style={{ marginTop: '0.5rem' }}>
-              <table className="table table-compact">
-                <thead>
-                  <tr><th>Q</th><th>Topic</th><th>Chose</th><th>Result</th><th>Correct answer</th><th className="num">Points</th><th className="num">Secs</th><th>What their choice shows</th></tr>
-                </thead>
-                <tbody>
-                  {d.responses.map((r) => {
-                    const kind = KIND_CLASS[r['Response Type']] || (r['Correct Y/N'] === 'Y' ? 'correct' : 'incorrect');
-                    const secs = Number(r['Active Time on Question (seconds)'] ?? r['Time on Question (seconds)']) || 0;
-                    const answered = r['Option Selected'] && r['Option Selected'] !== '—';
-                    return (
-                      <tr key={r['Question No']}>
-                        <td>{r.QID || r['Question No']}</td>
-                        <td className="small">{r.Category}</td>
-                        <td><b>{r['Option Selected']}</b></td>
-                        <td className={`kind-${kind}`}>{r['Response Type'] || (r['Correct Y/N'] === 'Y' ? 'Correct' : 'Incorrect')}</td>
-                        <td className="small">
-                          {kind === 'correct' ? '✓' : r['Best Answer'] ? (
-                            <>
-                              <b>{r['Best Answer']}</b>: {r['Best Answer Text']}
-                              {r['Also Accepted'] && <span className="muted"> (also accepted: {r['Also Accepted']})</span>}
-                            </>
-                          ) : '—'}
-                        </td>
-                        <td className="num">{r.Points ?? (r['Correct Y/N'] === 'Y' ? 1 : 0)}{r.Weight ? `/${r.Weight}` : ''}</td>
-                        <td className={`num ${answered && secs < TOO_FAST ? 'kind-concern' : ''}`}>{secs}</td>
-                        <td className="small">{r.Interpretation || ''}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </details>
+          {tab === 'answers' && <AnswerGroups responses={d.responses} />}
+
+          {tab === 'behaviour' && d.posture && <PostureCard p={d.posture} compact />}
+
+          {tab === 'card' && (
+            <>
+              <p className="muted small">What the participant sees after the unlock date.</p>
+              <ResultCard exam={exam} result={d.result} />
+            </>
+          )}
         </div>
       )}
       <div className="modal-actions"><button type="button" className="btn btn-secondary" onClick={onClose}>Close</button></div>
@@ -647,7 +803,7 @@ export default function ExamDetail() {
       {tab === 'questions' && <QuestionBank sections={sections} dimensions={(exam.config || {}).dimensions || {}} />}
       {tab === 'tags' && <TagsTab sections={sections} dimensions={(exam.config || {}).dimensions || {}} />}
       {tab === 'participants' && <ParticipantsTab exam={exam} participants={participants} reload={reload} onView={setViewing} />}
-      {tab === 'results' && <ResultsTab participants={participants} onView={setViewing} />}
+      {tab === 'results' && <ResultsTab examId={exam.id} participants={participants} onView={setViewing} />}
       {tab === 'analytics' && <AnalyticsTab examId={id} />}
       {tab === 'reports' && <ReportsTab examId={id} />}
       {replacing && <FindReplace examId={id} onClose={() => setReplacing(false)} onDone={reload} />}
