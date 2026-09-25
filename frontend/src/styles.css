@@ -371,6 +371,22 @@ pre.code { background: var(--surface-2); padding: 0.75rem; border-radius: 8px; o
   .qb-card { break-inside: avoid; box-shadow: none; }
 }
 
+.chip-row { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.tag-chip {
+  display: inline-flex; align-items: center; gap: 0.35rem; font: inherit; font-size: 0.85rem; cursor: pointer;
+  border: 1px solid var(--border); background: var(--surface); color: var(--text-2); border-radius: 999px; padding: 0.25rem 0.7rem;
+}
+span.tag-chip { cursor: default; padding: 0.1rem 0.5rem; font-size: 0.75rem; }
+.tag-chip.on { background: var(--primary); border-color: var(--primary); color: var(--primary-ink); }
+.tag-count { font-size: 0.75rem; opacity: 0.75; }
+.qb-tags { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.5rem; }
+.posture-strong { background: var(--ok-soft); color: var(--ok); }
+.posture-sound { background: var(--primary-soft); color: var(--primary); }
+.posture-developing { background: var(--warn-soft); color: var(--warn); }
+.posture-concern { background: var(--danger-soft); color: var(--danger); }
+.posture-card { border: 1px solid var(--border); border-radius: var(--radius); padding: 0.9rem 1rem; }
+.posture-counts { display: flex; flex-wrap: wrap; gap: 0.75rem; font-size: 0.85rem; margin: 0.4rem 0; }
+
 /* Charts */
 .chart { margin: 0; }
 .chart-head { display: flex; justify-content: space-between; align-items: center; font-weight: 600; margin-bottom: 0.5rem; }

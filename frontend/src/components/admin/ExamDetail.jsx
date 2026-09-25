@@ -7,6 +7,7 @@ import Modal from '../Modal.jsx';
 import { ResultCard } from '../../pages/Result.jsx';
 import { AddParticipantForm, CsvUpload } from './ParticipantForms.jsx';
 import QuestionBank from './QuestionBank.jsx';
+import TagsTab from './TagsTab.jsx';
 
 const KIND = {
   correct: 'Full credit',
@@ -23,6 +24,40 @@ const KIND_CLASS = {
   Incorrect: 'incorrect',
   Unanswered: 'incorrect',
 };
+
+function PostureCard({ p, compact = false }) {
+  if (!p) return null;
+  return (
+    <div className="posture-card stack-sm">
+      <div className="row-actions">
+        {!compact && <strong>{p.name}</strong>}
+        <span className={`badge posture-${p.level}`}>{p.label}</span>
+        <span className="small muted">Alignment {p.alignment}% across {p.situations} situations</span>
+      </div>
+      <div className="posture-counts">
+        <span className="kind-correct">Preferred {p.counts.correct}</span>
+        <span className="kind-acceptable">Acceptable {p.counts.acceptable}</span>
+        <span className="kind-neutral">Neutral {p.counts.neutral}</span>
+        <span className="kind-concern">Concern {p.counts.concern}</span>
+        {p.counts.incorrect > 0 && <span className="kind-incorrect">Other {p.counts.incorrect}</span>}
+        {p.counts.unanswered > 0 && <span className="muted">Unanswered {p.counts.unanswered}</span>}
+      </div>
+      <p className="small" style={{ margin: 0 }}>{p.summary}</p>
+      {p.dimensions.length > 0 && (
+        <details>
+          <summary className="small">Quality-wise alignment{p.concerns.length ? ' and concern answers' : ''}</summary>
+          <div className="stack-sm" style={{ marginTop: '0.5rem' }}>
+            {p.dimensions.map((d) => <ScoreBar key={d.key} label={d.label} value={d.pct} />)}
+            {p.tendencies.length > 0 && <p className="small"><b>Tendencies:</b> {p.tendencies.join('; ')}</p>}
+            {p.concerns.map((c) => (
+              <div key={c.qid} className="small kind-concern">{c.qid} ({c.category}) — chose {c.option}: {c.interpretation}</div>
+            ))}
+          </div>
+        </details>
+      )}
+    </div>
+  );
+}
 
 function statusBadge(p) {
   if (p.status === 'submitted') return <span className="badge badge-submitted">Submitted</span>;
@@ -186,6 +221,53 @@ function AnalyticsTab({ examId }) {
           })}
         </div>
       )}
+      {a.postures && a.postures.length > 0 && (
+        <div className="card stack-sm">
+          <h3>Behaviour posture by individual (admin only)</h3>
+          <p className="muted small">
+            How each person tends to respond in workplace situations: how often they chose the preferred, acceptable, neutral or
+            concern response, alignment per quality, and the tendencies their other answers reveal. Lowest alignment first.
+            Use it as a conversation starter, not as a verdict.
+          </p>
+          <div className="table-wrap">
+            <table className="table table-compact">
+              <thead>
+                <tr><th>Participant</th><th>Posture</th><th className="num">Alignment</th><th className="num">Pref.</th><th className="num">Accept.</th><th className="num">Neutral</th><th className="num">Concern</th><th>Strengths</th><th>Develop</th></tr>
+              </thead>
+              <tbody>
+                {a.postures.map((p) => (
+                  <tr key={p.username}>
+                    <td>{p.name}</td>
+                    <td><span className={`badge posture-${p.level}`}>{p.label}</span></td>
+                    <td className="num">{p.alignment}%</td>
+                    <td className="num">{p.counts.correct}</td>
+                    <td className="num">{p.counts.acceptable}</td>
+                    <td className="num">{p.counts.neutral}</td>
+                    <td className={`num ${p.counts.concern ? 'kind-concern' : ''}`}>{p.counts.concern}</td>
+                    <td className="small">{p.strengths.join(', ') || '—'}</td>
+                    <td className="small">{p.development.join(', ') || '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <h3>Individual profiles</h3>
+          {a.postures.map((p) => <PostureCard key={p.username} p={p} />)}
+        </div>
+      )}
+      {a.tags && a.tags.length > 0 && (
+        <div className="card">
+          <h3>Performance by tag</h3>
+          <table className="table table-compact">
+            <thead><tr><th>Tag</th><th className="num">Questions</th><th className="num">Average score</th><th>Question IDs</th></tr></thead>
+            <tbody>
+              {a.tags.map((t) => (
+                <tr key={t.tag}><td>#{t.tag}</td><td className="num">{t.questions.length}</td><td className="num">{t.average ?? '—'}{t.average !== null ? '%' : ''}</td><td className="small">{t.questions.join(', ')}</td></tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
       {a.behaviour && a.behaviour.length > 0 && (
         <div className="card">
           <h3>Behaviour answer patterns (admin only)</h3>
@@ -345,6 +427,12 @@ function ResultModal({ exam, participant, onClose }) {
               <div className="stat"><span className="stat-value">{d.result.concernCount ?? 0}</span><span className="stat-label">Concern answers</span></div>
             </div>
           )}
+          {d.posture && (
+            <>
+              <h3>Behaviour posture</h3>
+              <PostureCard p={d.posture} compact />
+            </>
+          )}
           <h3>Question-wise responses</h3>
           <div className="table-wrap">
             <table className="table table-compact">
@@ -440,13 +528,14 @@ export default function ExamDetail() {
         <div className="stat"><span className="stat-value">{Math.max(0, exam.participants - exam.submitted - exam.inProgress)}</span><span className="stat-label">Not started</span></div>
       </div>
       <div className="tabs" role="tablist">
-        {[['questions', `Questions (${exam.questionCount})`], ['participants', 'Participants'], ['results', 'Results'], ['analytics', 'Analytics']].map(([k, label]) => (
+        {[['questions', `Questions (${exam.questionCount})`], ['tags', 'Tags'], ['participants', 'Participants'], ['results', 'Results'], ['analytics', 'Analytics']].map(([k, label]) => (
           <button key={k} type="button" role="tab" aria-selected={tab === k} className={tab === k ? 'active' : ''} onClick={() => setTab(k)}>
             {label}
           </button>
         ))}
       </div>
       {tab === 'questions' && <QuestionBank sections={sections} dimensions={(exam.config || {}).dimensions || {}} />}
+      {tab === 'tags' && <TagsTab sections={sections} dimensions={(exam.config || {}).dimensions || {}} />}
       {tab === 'participants' && <ParticipantsTab exam={exam} participants={participants} reload={reload} onView={setViewing} />}
       {tab === 'results' && <ResultsTab participants={participants} onView={setViewing} />}
       {tab === 'analytics' && <AnalyticsTab examId={id} />}

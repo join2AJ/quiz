@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../../api.js';
 
@@ -41,6 +41,12 @@ export default function ImportAdmin() {
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(null);
   const [resetPasswords, setResetPasswords] = useState(false);
+  const [exams, setExams] = useState([]);
+  const [target, setTarget] = useState('');
+  useEffect(() => {
+    api('/admin/exams').then((d) => setExams(d.exams)).catch(() => {});
+  }, []);
+  const targetExam = exams.find((e) => e.id === target);
   const [meta, setMeta] = useState({
     title: 'Pass Section Knowledge & Behaviour Assessment 2026',
     team: 'Pass Section — LBIA',
@@ -77,7 +83,7 @@ export default function ImportAdmin() {
     setBusy(true);
     setError('');
     try {
-      setDone(await api('/admin/import', { method: 'POST', body: { database: db, meta, resetPasswords } }));
+      setDone(await api('/admin/import', { method: 'POST', body: { database: db, meta, resetPasswords, targetExamId: target || undefined } }));
     } catch (err) {
       setError(err.message);
     } finally {
@@ -109,7 +115,7 @@ export default function ImportAdmin() {
               <h3>In this file</h3>
               <ul className="check-list">
                 <li>{info.questions} questions — {info.sections.map((s) => `${s.key}: ${s.count}`).join(', ')}</li>
-                <li>{info.staff.length} staff logins</li>
+                {info.staff.length > 0 && <li>{info.staff.length} staff logins</li>}
                 <li>{info.rules} remark rules, {info.dims} scoring dimensions</li>
                 <li>
                   Suggested time: {Object.entries(info.timers).map(([k, v]) => `${k} ${v}s`).join(', ') || 'none'}
@@ -123,7 +129,7 @@ export default function ImportAdmin() {
                 </p>
               )}
             </div>
-            <div>
+            {info.staff.length > 0 && <div>
               <h3>Staff</h3>
               <div className="table-wrap" style={{ maxHeight: 240, overflow: 'auto' }}>
                 <table className="table table-compact">
@@ -135,12 +141,43 @@ export default function ImportAdmin() {
                   </tbody>
                 </table>
               </div>
-            </div>
+            </div>}
           </div>
         )}
       </div>
 
       {info && !done && (
+        <fieldset className="card">
+          <legend>Where should these questions go?</legend>
+          <label className="field">
+            <span>Import into</span>
+            <select value={target} onChange={(e) => setTarget(e.target.value)}>
+              <option value="">A new exam</option>
+              {exams.map((e) => (
+                <option key={e.id} value={e.id} disabled={e.submitted > 0 || e.inProgress > 0}>
+                  Add to: {e.title} ({e.questionCount} questions{e.submitted > 0 || e.inProgress > 0 ? ' — already started, locked' : ''})
+                </option>
+              ))}
+            </select>
+          </label>
+          {targetExam && (
+            <p className="small muted">
+              The file's {info.sections.length} section(s) will be added after the existing {targetExam.sectionCount} section(s) of
+              “{targetExam.title}”. Existing questions, remark rules and settings are kept; new qualities and suggested times are
+              added. Only possible while nobody has started the exam.
+            </p>
+          )}
+          {targetExam && (
+            <div className="form-actions">
+              <button type="button" className="btn btn-primary btn-lg" onClick={runImport} disabled={busy}>
+                {busy ? 'Adding…' : `Add ${info.questions} questions to this exam`}
+              </button>
+            </div>
+          )}
+        </fieldset>
+      )}
+
+      {info && !done && !targetExam && (
         <fieldset className="card">
           <legend>Exam details</legend>
           <div className="form-grid">
@@ -165,7 +202,7 @@ export default function ImportAdmin() {
           </label>
           <div className="form-actions">
             <button type="button" className="btn btn-primary btn-lg" onClick={runImport} disabled={busy}>
-              {busy ? 'Importing…' : `Import ${info.questions} questions and ${info.staff.length} staff`}
+              {busy ? 'Importing…' : `Import ${info.questions} questions${info.staff.length ? ` and ${info.staff.length} staff` : ''}`}
             </button>
           </div>
         </fieldset>
@@ -174,6 +211,7 @@ export default function ImportAdmin() {
       {done && (
         <div className="card stack">
           <div className="alert alert-ok">
+            {done.appended ? `Added to “${done.exam.title}” — it now has ${done.totalQuestions} questions. ` : ''}
             Imported {done.questions} questions ({done.sections.map((s) => `${s.name} ${s.questions}`).join(', ')}). Created {done.created} new
             logins, updated {done.updated}, assigned {done.assigned} to the exam.
           </div>

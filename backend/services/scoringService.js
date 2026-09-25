@@ -394,6 +394,82 @@ function avg(list) {
   return list.length ? round1(list.reduce((a, b) => a + b, 0) / list.length) : 0;
 }
 
+// ---------------------------------------------------------------- behaviour posture
+
+const KIND_FROM_LABEL = Object.fromEntries(Object.entries(KIND_LABEL).map(([k, v]) => [v, k]));
+
+/** "CONCERN: makes a false promise — integrity gap" -> "makes a false promise" */
+function trait(interpretation) {
+  const t = String(interpretation || '')
+    .replace(/^(CONCERN|PREFERRED|ACCEPTABLE|NEUTRAL)\s*:\s*/i, '')
+    .split(/\s+[—–-]\s+/)[0]
+    .trim();
+  return t ? t[0].toUpperCase() + t.slice(1) : '';
+}
+
+/**
+ * Behaviour posture of one participant, from their question-wise responses:
+ * how often they chose the preferred / acceptable / neutral / concern
+ * response, per-dimension alignment, strengths, development areas and the
+ * tendencies their non-preferred answers reveal. Admin only.
+ */
+function behaviourPosture(rows, exam) {
+  const beh = rows.filter((r) => r.Type === 'BEHAVIOUR' || (r.Interpretation && r.Type !== 'KNOWLEDGE'));
+  if (!beh.length) return null;
+  const counts = { correct: 0, acceptable: 0, neutral: 0, concern: 0, incorrect: 0, unanswered: 0 };
+  const dims = new Map();
+  const traits = new Map();
+  const concernItems = [];
+  let earned = 0;
+  let max = 0;
+  for (const r of beh) {
+    const kind = KIND_FROM_LABEL[r['Response Type']] || (r['Option Selected'] === '—' ? 'unanswered' : r['Correct Y/N'] === 'Y' ? 'correct' : 'incorrect');
+    counts[kind] = (counts[kind] || 0) + 1;
+    const w = Number(r.Weight) || 1;
+    const credit = r.Credit !== undefined && r.Credit !== '' ? Number(r.Credit) : kind === 'correct' ? 1 : 0;
+    earned += credit * w;
+    max += w;
+    if (r.Dimension) {
+      const d = dims.get(r.Dimension) || { earned: 0, max: 0 };
+      d.earned += credit * w;
+      d.max += w;
+      dims.set(r.Dimension, d);
+    }
+    if (kind !== 'correct' && kind !== 'unanswered') {
+      const t = trait(r.Interpretation);
+      if (t) traits.set(t, (traits.get(t) || 0) + 1);
+    }
+    if (kind === 'concern') {
+      concernItems.push({ qid: r.QID || String(r['Question No']), category: r.Category, option: r['Option Selected'], interpretation: r.Interpretation || '' });
+    }
+  }
+  const alignment = pct(earned, max);
+  const dimensions = [...dims.entries()]
+    .map(([key, d]) => ({ key, ...dimensionLabel(exam, key), pct: pct(d.earned, d.max) }))
+    .sort((a, b) => b.pct - a.pct);
+  const strengths = dimensions.filter((d) => d.pct >= 70).slice(0, 3).map((d) => d.label);
+  const development = [...dimensions].reverse().filter((d) => d.pct < 60).slice(0, 3).map((d) => d.label);
+  const tendencies = [...traits.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4).map(([t, n]) => (n > 1 ? `${t} (×${n})` : t));
+
+  let label;
+  let level;
+  if (counts.concern >= 3) [label, level] = ['Needs attention — repeated concern responses', 'concern'];
+  else if (alignment >= 75 && counts.concern === 0) [label, level] = ['Strong and consistent', 'strong'];
+  else if (alignment >= 60 && counts.concern <= 1) [label, level] = ['Generally sound', 'sound'];
+  else if (alignment >= 40) [label, level] = ['Developing', 'developing'];
+  else [label, level] = ['Needs guidance', 'concern'];
+
+  const parts = [`${label}: chose the preferred response in ${counts.correct} of ${beh.length} situations`];
+  if (counts.acceptable) parts.push(`an acceptable one in ${counts.acceptable}`);
+  if (counts.concern) parts.push(`a concern response in ${counts.concern}`);
+  let summary = `${parts.join(', ')} (alignment ${alignment}%).`;
+  if (strengths.length) summary += ` Strongest in ${strengths.join(', ')}.`;
+  if (development.length) summary += ` Develop: ${development.join(', ')}.`;
+  if (tendencies.length) summary += ` Tendencies seen: ${tendencies.slice(0, 2).join('; ')}.`;
+
+  return { label, level, alignment, situations: beh.length, counts, dimensions, strengths, development, tendencies, concerns: concernItems, summary };
+}
+
 function computeAnalytics(summary, responses, bank, exam) {
   const qByNo = new Map(((bank && bank.questions) || []).map((q) => [q.no, q]));
   const perQuestion = new Map();
@@ -560,8 +636,39 @@ function computeAnalytics(summary, responses, bank, exam) {
     }
   }
 
+  // Behaviour posture of each individual.
+  const byUser = new Map();
+  for (const r of responses) {
+    if (!byUser.has(r.Username)) byUser.set(r.Username, []);
+    byUser.get(r.Username).push(r);
+  }
+  const postures = summary
+    .map((s) => {
+      const p = behaviourPosture(byUser.get(s.Username) || [], exam);
+      return p && { name: s.Name, username: s.Username, designation: s.Designation || '', ...p };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.alignment - b.alignment);
+
+  // Performance by tag (a question can carry several tags).
+  const tagStats = new Map();
+  for (const q of (bank && bank.questions) || []) {
+    const stat = questions.find((x) => x.no === q.no);
+    for (const t of q.tags || []) {
+      const e = tagStats.get(t) || { tag: t, questions: [], scores: [] };
+      e.questions.push(q.qid || `Q${q.no}`);
+      if (stat) e.scores.push(stat.accuracy);
+      tagStats.set(t, e);
+    }
+  }
+  const tags = [...tagStats.values()]
+    .map((t) => ({ tag: t.tag, questions: t.questions, average: t.scores.length ? avg(t.scores) : null }))
+    .sort((a, b) => b.questions.length - a.questions.length || a.tag.localeCompare(b.tag));
+
   return {
     participants: summary.length,
+    postures,
+    tags,
     averageScore: avg(summary.map((r) => Number(r['Total Score %']) || 0)),
     averageSeconds: Math.round(avg(summary.map((r) => Number(r['Total Seconds']) || 0))),
     questions,
@@ -606,6 +713,20 @@ function buildAnalyticsSheet(summary, responses, bank, exam) {
   if (a.dimensions.length) {
     aoa.push([], ['DIMENSION-WISE PERFORMANCE'], ['Dimension', 'Group', 'Average %'], ...a.dimensions.map((d) => [d.label, d.group, d.average]));
   }
+  if (a.postures.length) {
+    aoa.push(
+      [],
+      ['BEHAVIOUR POSTURE BY INDIVIDUAL (admin only)'],
+      ['Participant', 'Username', 'Posture', 'Alignment %', 'Preferred', 'Acceptable', 'Neutral', 'Concern', 'Strengths', 'Develop', 'Tendencies', 'Summary'],
+      ...a.postures.map((p) => [
+        p.name, p.username, p.label, p.alignment, p.counts.correct, p.counts.acceptable, p.counts.neutral, p.counts.concern,
+        p.strengths.join(', '), p.development.join(', '), p.tendencies.join('; '), p.summary,
+      ]),
+    );
+  }
+  if (a.tags.length) {
+    aoa.push([], ['PERFORMANCE BY TAG'], ['Tag', 'Questions', 'Average Score %', 'Question IDs'], ...a.tags.map((t) => [t.tag, t.questions.length, t.average ?? '', t.questions.join(', ')]));
+  }
   if (a.behaviour.length) {
     aoa.push([], ['BEHAVIOUR RESPONSE DISTRIBUTION (admin only)'], ['Question No', 'QID', 'Option', 'Count', 'Scored As', 'Interpretation']);
     for (const q of a.behaviour) {
@@ -630,6 +751,7 @@ function buildAnalyticsSheet(summary, responses, bank, exam) {
 }
 
 module.exports = {
+  behaviourPosture,
   REMARKS,
   KIND_LABEL,
   creditFor,

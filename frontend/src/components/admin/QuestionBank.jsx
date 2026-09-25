@@ -16,7 +16,7 @@ function optionKind(q, k) {
  * Read-only view of every question with the answer key and behaviour
  * interpretation (admin only — this data is never sent to participants).
  */
-export default function QuestionBank({ sections, dimensions = {} }) {
+export default function QuestionBank({ sections, dimensions = {}, extraFilter = null }) {
   const [lang, setLang] = useState('both');
   const [section, setSection] = useState('all');
   const [search, setSearch] = useState('');
@@ -29,10 +29,11 @@ export default function QuestionBank({ sections, dimensions = {} }) {
 
   const term = search.trim().toLowerCase();
   const matches = (q) =>
-    !term ||
+    (!extraFilter || extraFilter(q)) &&
+    (!term ||
     [q.qid, q.category, q.textEn, q.textHi, q.scenarioEn, ...q.options.map((o) => o.en)].some((t) =>
       String(t || '').toLowerCase().includes(term),
-    );
+    ));
   const show = (en, hi) => (
     <>
       {(lang === 'en' || lang === 'both') && en && <div>{en}</div>}
@@ -70,6 +71,7 @@ export default function QuestionBank({ sections, dimensions = {} }) {
       </div>
       <p className="muted small">Admin only. Answers, interpretations and explanations are never shown to participants.</p>
 
+      {numbered.every((s) => !s.questions.some(matches)) && <p className="muted">No questions match.</p>}
       {numbered
         .filter((s) => section === 'all' || String(s.no) === String(section))
         .map((s) => {
@@ -91,6 +93,9 @@ export default function QuestionBank({ sections, dimensions = {} }) {
                       {showKey && q.dimension && <span className="badge badge-in_progress">{dim.label || q.dimension}</span>}
                       {showKey && <span className="badge">weight {q.weight ?? 1}</span>}
                     </div>
+                    {(q.tags || []).length > 0 && (
+                      <div className="qb-tags">{q.tags.map((t) => <span key={t} className="tag-chip small">#{t}</span>)}</div>
+                    )}
                     {(q.scenarioEn || q.scenarioHi) && (
                       <div className="scenario pre">
                         <span className="scenario-label">Situation</span>

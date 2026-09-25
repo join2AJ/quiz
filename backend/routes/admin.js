@@ -331,7 +331,12 @@ router.get('/exams/:id/results/:username', async (req, res) => {
   if (!attempt || !attempt.result) throw httpError(404, 'No submission');
   const responses = await store.getResponseRows(exam, username);
   await audit.log(req, 'ADMIN_VIEW_RESULT', { admin_username: 'admin', exam_id: exam.id, viewed_participant_username: username });
-  res.json({ result: resultCard(exam, attempt, { admin: true }), attempt: attemptInfo(exam, attempt), responses });
+  res.json({
+    result: resultCard(exam, attempt, { admin: true }),
+    attempt: attemptInfo(exam, attempt),
+    responses,
+    posture: scoring.behaviourPosture(responses, exam),
+  });
 });
 
 router.get('/exams/:id/analytics', async (req, res) => {
@@ -482,7 +487,20 @@ const SECTION_NAMES = {
   knowledge: { name: 'Knowledge', nameHi: 'ज्ञान' },
   behaviour: { name: 'Behaviour', nameHi: 'व्यवहार' },
   behavior: { name: 'Behaviour', nameHi: 'व्यवहार' },
+  values: { name: 'Values & Priorities', nameHi: 'मूल्य और प्राथमिकताएँ' },
 };
+
+/** Section name/description: from the file's optional "sections_meta", else defaults. */
+function sectionMeta(db, key) {
+  const m = ((db && db.sections_meta) || {})[key] || {};
+  const d = SECTION_NAMES[key.toLowerCase()] || { name: key, nameHi: '' };
+  return {
+    name: m.name || d.name,
+    nameHi: m.name_hi || d.nameHi,
+    description: m.description || '',
+    descriptionHi: m.description_hi || '',
+  };
+}
 
 /** One question from the PassSection database JSON -> editor/question shape. */
 function importQuestion(q, where) {
@@ -535,9 +553,7 @@ router.post('/import', async (req, res) => {
   if (!rawSections.length) throw httpError(400, 'No questions found in the file.');
   const sections = normalizeSections(
     rawSections.map(([key, list]) => ({
-      ...(SECTION_NAMES[key.toLowerCase()] || { name: key, nameHi: '' }),
-      description: '',
-      descriptionHi: '',
+      ...sectionMeta(db, key),
       questions: list.map((q, i) => importQuestion(q, `${key} #${i + 1}`)),
     })),
   );
@@ -613,13 +629,42 @@ router.post('/import', async (req, res) => {
     });
   }
 
-  const exam = { id: `EX${Date.now().toString(36).toUpperCase()}`, ...meta, fileName: '', createdAt: new Date().toISOString() };
-  await store.saveExam(exam);
-  await store.saveQuestionBank(exam, sections);
+  // Either add the file's sections to an existing exam, or create a new exam.
+  const targetId = clean(req.body.targetExamId, 40);
+  let exam;
+  let finalSections = sections;
+  if (targetId) {
+    exam = await loadExam(targetId);
+    const stats = await examStats(exam);
+    if (stats.submitted > 0 || stats.inProgress > 0) {
+      throw httpError(409, 'People have already started this exam, so questions cannot be added. Import into a new exam instead.');
+    }
+    const existing = await bankForEditor(exam);
+    const existingIds = new Set(existing.flatMap((sec) => sec.questions.map((q) => q.qid)).filter(Boolean));
+    const dupes = sections.flatMap((sec) => sec.questions.map((q) => q.qid)).filter((id) => id && existingIds.has(id));
+    if (dupes.length) throw httpError(409, `These question IDs are already in the exam: ${dupes.slice(0, 8).join(', ')}. Nothing was added.`);
+    finalSections = normalizeSections([...existing, ...sections]);
+    const cfg = exam.config || {};
+    exam.config = normalizeConfig({
+      ...cfg,
+      dimensions: { ...dimensions, ...(cfg.dimensions || {}) },
+      timerSeconds: { ...timerSeconds, ...(cfg.timerSeconds || {}) },
+      remarkRules: cfg.remarkRules && cfg.remarkRules.length ? cfg.remarkRules : remarkRules,
+    });
+    if (exam.estimatedMinutes) exam.estimatedMinutes += Math.ceil(estimated / 60);
+    await store.saveExam(exam);
+    await store.saveQuestionBank(exam, finalSections);
+  } else {
+    exam = { id: `EX${Date.now().toString(36).toUpperCase()}`, ...meta, fileName: '', createdAt: new Date().toISOString() };
+    await store.saveExam(exam);
+    await store.saveQuestionBank(exam, sections);
+  }
   if (users.length) await store.upsertUsers(users);
   const assigned = users.length ? await store.assign(exam.id, users.map((u) => u.username)) : 0;
 
-  await audit.log(req, 'ADMIN_CREATE_EXAM', { admin_username: 'admin', exam_id: exam.id, exam_title: exam.title, team: exam.team, site: exam.site });
+  if (!targetId) {
+    await audit.log(req, 'ADMIN_CREATE_EXAM', { admin_username: 'admin', exam_id: exam.id, exam_title: exam.title, team: exam.team, site: exam.site });
+  }
   await audit.log(req, 'ADMIN_IMPORT_DATABASE', {
     admin_username: 'admin',
     exam_id: exam.id,
@@ -629,6 +674,7 @@ router.post('/import', async (req, res) => {
     staff_created: users.filter((u) => u.isNew).length,
     staff_updated: users.filter((u) => !u.isNew).length,
     passwords_reset: resetPasswords,
+    mode: targetId ? 'added_to_existing_exam' : 'new_exam',
   });
   for (const u of users) {
     await audit.log(req, 'ADMIN_ADD_PARTICIPANT', { admin_username: 'admin', participant_username: u.username, exam_id: exam.id });
@@ -636,6 +682,8 @@ router.post('/import', async (req, res) => {
 
   res.status(201).json({
     exam,
+    appended: !!targetId,
+    totalQuestions: finalSections.reduce((n, sec) => n + sec.questions.length, 0),
     questions: found,
     sections: sections.map((sec) => ({ name: sec.name, questions: sec.questions.length })),
     created: users.filter((u) => u.isNew).length,

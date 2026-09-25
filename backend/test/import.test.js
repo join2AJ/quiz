@@ -159,6 +159,47 @@ test('import database, score behaviour with partial credit, audit chain', async 
   assert.equal(key['Partial Credit Options'], 'A');
   assert.equal(key['Concern Options'], 'C');
 
+  // Behaviour posture and tag analytics are computed per individual.
+  const posture = an.postures.find((x) => x.username === 'test.one');
+  assert.ok(posture, 'posture missing');
+  assert.equal(posture.situations, 2);
+  assert.equal(posture.counts.acceptable, 1);
+  assert.equal(posture.counts.concern, 1);
+  assert.ok(posture.tendencies.some((t) => t.startsWith('Bypass')), JSON.stringify(posture.tendencies));
+  assert.ok(an.tags.some((t) => t.tag === 'pressure' && t.questions.includes('B01')));
+  assert.ok(detail.data.posture, 'admin result should include posture');
+
+  // Adding sections to an exam that someone has started is refused …
+  const pack = {
+    sections_meta: { values: { name: 'Values & Priorities', name_hi: 'मूल्य' } },
+    questions: {
+      values: [{
+        id: 'V01', type: 'BEHAVIOUR', category: 'Integrity', en: { question: 'Values Q?', scenario: 'S', options: ['A', 'B', 'C', 'D'].map((l) => ({ letter: l, text: `v ${l}`, is_correct: l === 'C' })) },
+        hi: { question: 'मूल्य प्र?', options: ['A', 'B', 'C', 'D'].map((l) => ({ letter: l, text: `म ${l}` })) },
+        answer_key: { correct_letter: 'C', preferred_options: ['C', 'A'], concern_options: ['B'], neutral_options: ['D'] },
+        reveal_map: { B: 'CONCERN: accepts gift' }, scoring: { dimension: 'integrity', weight: 2 }, analytics_tags: ['values', 'integrity'],
+      }],
+    },
+    scoring_dimensions: { values: { integrity: { label: 'Integrity', label_hi: 'सत्यनिष्ठा' } } },
+  };
+  const locked = await admin('POST', '/api/admin/import', { database: pack, targetExamId: examId });
+  assert.equal(locked.status, 409);
+  // … but works on a fresh exam nobody has started.
+  const fresh = await admin('POST', '/api/admin/import', { database, meta: { title: 'Second', examDate: '2026-09-26' } });
+  const added = await admin('POST', '/api/admin/import', { database: pack, targetExamId: fresh.data.exam.id });
+  assert.equal(added.status, 201, JSON.stringify(added.data));
+  assert.equal(added.data.appended, true);
+  assert.equal(added.data.totalQuestions, 5);
+  const ed2 = await admin('GET', `/api/admin/exams/${fresh.data.exam.id}`);
+  assert.deepEqual(ed2.data.sections.map((s) => s.name), ['Knowledge', 'Behaviour', 'Values & Priorities']);
+  assert.equal(ed2.data.exam.config.dimensions.integrity.label, 'Integrity');
+  assert.equal(ed2.data.exam.config.remarkRules.length, 3); // existing rules kept
+  const v1 = ed2.data.sections[2].questions[0];
+  assert.deepEqual(v1.partial, ['A']);
+  assert.deepEqual(v1.tags, ['values', 'integrity']);
+  // Same IDs twice are refused.
+  assert.equal((await admin('POST', '/api/admin/import', { database: pack, targetExamId: fresh.data.exam.id })).status, 409);
+
   // Tampering with a stored entry is detected (file store only; Supabase blocks updates outright).
   if (!useSupabase) {
     const store = require('../services/store');

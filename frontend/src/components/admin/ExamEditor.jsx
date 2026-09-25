@@ -150,6 +150,14 @@ function QuestionEditor({ q, index, group, onChange, onRemove, onMove, isFirst, 
         </div>
         <label className="field"><span>Question (English)</span><textarea rows={2} value={q.textEn} onChange={(e) => set('textEn', e.target.value)} /></label>
         <label className="field"><span>Question (Hindi)</span><textarea rows={2} value={q.textHi} onChange={(e) => set('textHi', e.target.value)} /></label>
+        <label className="field"><span>Tags (comma-separated — e.g. integrity, customer_satisfaction, prioritisation)</span>
+          <input
+            list="tag-suggestions"
+            value={q.tagsText ?? (q.tags || []).join(', ')}
+            onChange={(e) => onChange({ ...q, tagsText: e.target.value, tags: e.target.value.split(',').map((t) => t.trim().toLowerCase().replace(/\s+/g, '_')).filter(Boolean) })}
+            placeholder="integrity, one_team"
+          />
+        </label>
         <div className="form-grid">
           <label className="field"><span>Situation / scenario (English, optional)</span><textarea rows={2} value={q.scenarioEn || ''} onChange={(e) => set('scenarioEn', e.target.value)} /></label>
           <label className="field"><span>Situation / scenario (Hindi, optional)</span><textarea rows={2} value={q.scenarioHi || ''} onChange={(e) => set('scenarioHi', e.target.value)} /></label>
@@ -375,6 +383,9 @@ export default function ExamEditor() {
       <datalist id="type-tags">
         <option value="KNOWLEDGE" />
         <option value="BEHAVIOUR" />
+      </datalist>
+      <datalist id="tag-suggestions">
+        {[...new Set(form.sections.flatMap((sec) => sec.questions.flatMap((q) => q.tags || [])))].map((t) => <option key={t} value={t} />)}
       </datalist>
       <datalist id="dimension-keys">
         {dimensionKeys.map((k) => <option key={k} value={k} />)}
