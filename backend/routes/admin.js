@@ -7,6 +7,7 @@ const scoring = require('../services/scoringService');
 const audit = require('../services/auditService');
 const { attemptInfo } = require('./exam');
 const { resultCard } = require('./result');
+const leadership = require('../services/leadershipService');
 
 const cache = require('../services/cache');
 
@@ -395,13 +396,19 @@ router.get('/exams/:id/results/:username', async (req, res) => {
   const username = excel.normalizeUsername(req.params.username);
   const attempt = await store.getAttempt(exam.id, username);
   if (!attempt || !attempt.result) throw httpError(404, 'No submission');
-  const responses = await store.getResponseRows(exam, username);
+  const [rawResponses, bank, summary] = await Promise.all([
+    store.getResponseRows(exam, username),
+    store.getQuestionBank(exam),
+    store.getSummaryRows(exam),
+  ]);
+  const responses = leadership.withBestAnswers(rawResponses, bank);
   await audit.log(req, 'ADMIN_VIEW_RESULT', { admin_username: 'admin', exam_id: exam.id, viewed_participant_username: username });
   res.json({
     result: resultCard(exam, attempt, { admin: true }),
     attempt: attemptInfo(exam, attempt),
     responses,
     posture: scoring.behaviourPosture(responses, exam),
+    leadership: leadership.individual({ result: attempt.result, rows: responses, summary, bank, exam }),
   });
 });
 
@@ -412,7 +419,13 @@ router.get('/exams/:id/analytics', async (req, res) => {
     store.getResponseRows(exam),
     store.getQuestionBank(exam),
   ]);
-  res.json({ analytics: scoring.computeAnalytics(summary, responses, bank, exam) });
+  const analytics = scoring.computeAnalytics(summary, responses, bank, exam);
+  const [assignments, reports] = await Promise.all([
+    store.getAssignments(),
+    store.getAudit({ examId: exam.id, event: 'QUESTION_REPORTED' }),
+  ]);
+  const assigned = assignments.filter((a) => a.examId === exam.id).length;
+  res.json({ analytics, team: leadership.team({ analytics, summary, responses, bank, exam, assigned, reports }) });
 });
 
 router.get('/exams/:id/download', async (req, res) => {
@@ -426,8 +439,36 @@ router.get('/exams/:id/download', async (req, res) => {
   const summary = scoring.refreshRemarks(rawSummary, exam);
   await audit.log(req, 'ADMIN_DOWNLOAD_EXCEL', { admin_username: 'admin', exam_id: exam.id, file_generated: exam.fileName });
   const entries = (await store.getAudit({ examId: exam.id })).sort((a, b) => a.seq - b.seq);
+  // Leadership summary (one row per person) and question reports.
+  const attempts = new Map((await store.getAttempts(exam.id)).map((a) => [a.username, a]));
+  const leaderRows = summary
+    .map((s) => {
+      const at = attempts.get(s.Username);
+      if (!at || !at.result) return null;
+      const L = leadership.individual({ result: at.result, rows: responses.filter((r) => r.Username === s.Username), summary, bank, exam });
+      const row = { Name: s.Name, Username: s.Username, 'Score %': s['Total Score %'], Headline: L.headline, 'How seriously': L.engagement.level, Summary: L.paragraph };
+      for (const x of L.answers) row[x.q] = x.a;
+      return row;
+    })
+    .filter(Boolean);
+  const reportRows = entries
+    .filter((e) => e.event === 'QUESTION_REPORTED')
+    .map((e) => {
+      const d = JSON.parse(e.data || '{}');
+      return { 'Reported At (UTC)': e.ts, Username: e.username, Question: d.question_id, Reason: d.reason, Comment: d.comment, Language: d.language };
+    });
   const build = (auditRows) =>
-    excel.buildResultsWorkbook({ summary, responses, bank, analyticsAoa: scoring.buildAnalyticsSheet(summary, responses, bank, exam), auditRows });
+    excel.buildResultsWorkbook({
+      summary,
+      responses: leadership.withBestAnswers(responses, bank),
+      bank,
+      analyticsAoa: scoring.buildAnalyticsSheet(summary, responses, bank, exam),
+      auditRows,
+      extraSheets: [
+        { name: 'Leadership Summary', rows: leaderRows },
+        { name: 'Question Reports', rows: reportRows },
+      ],
+    });
   // Serverless responses are limited to ~6 MB. Results always come first: if
   // the file would be too large, the Audit_Log sheet keeps only key events
   // (logins, starts, changes, tab switches, submits, admin actions) and
@@ -445,6 +486,27 @@ router.get('/exams/:id/download', async (req, res) => {
     `attachment; filename="${exam.fileName.replace(/[^\x20-\x7E]/g, '_')}"; filename*=UTF-8''${encodeURIComponent(exam.fileName)}`,
   );
   res.send(buf);
+});
+
+router.get('/exams/:id/reports', async (req, res) => {
+  const exam = await loadExam(req.params.id);
+  const [entries, users] = await Promise.all([store.getAudit({ examId: exam.id, event: 'QUESTION_REPORTED' }), store.getUsers()]);
+  const names = new Map(users.map((u) => [u.username, u.name]));
+  const reports = entries.map((e) => {
+    const d = JSON.parse(e.data || '{}');
+    return {
+      seq: Number(e.seq),
+      at: e.ts,
+      username: e.username,
+      name: names.get(e.username) || e.username,
+      qid: d.question_id,
+      questionNumber: d.question_number,
+      reason: d.reason,
+      comment: d.comment,
+      language: d.language,
+    };
+  });
+  res.json({ reports });
 });
 
 // ---------------------------------------------------------------- users
@@ -764,6 +826,77 @@ router.post('/import', async (req, res) => {
     adminInRoster,
     warnings,
   });
+});
+
+// ---------------------------------------------------------------- update wording from a file
+
+const TEXT_FIELDS = ['textEn', 'textHi', 'scenarioEn', 'scenarioHi', 'category', 'explanation', 'explanationHi'];
+
+/**
+ * Update only the wording of existing questions from a database JSON,
+ * matched by question ID (K01, B05…). Answer keys, scoring, weights and the
+ * order of options are never changed, so it is safe even after people have
+ * submitted. Pass apply=false to preview.
+ */
+router.post('/exams/:id/update-text', async (req, res) => {
+  const exam = await loadExam(req.params.id);
+  const db = req.body && req.body.database;
+  if (!db || typeof db !== 'object' || !db.questions) throw httpError(400, 'This does not look like the PassSection database JSON.');
+  const incoming = new Map();
+  for (const [key, list] of Object.entries(db.questions)) {
+    if (!Array.isArray(list)) continue;
+    list.forEach((q, i) => {
+      if (q && q.id) incoming.set(String(q.id), importQuestion(q, `${key} #${i + 1}`));
+    });
+  }
+  const sections = await bankForEditor(exam);
+  const changes = [];
+  const matched = new Set();
+  for (const sec of sections) {
+    for (const q of sec.questions) {
+      const src = incoming.get(q.qid);
+      if (!src) continue;
+      matched.add(q.qid);
+      const changed = [];
+      for (const f of TEXT_FIELDS) {
+        const v = clean(src[f]);
+        if (v && v !== (q[f] || '')) {
+          changed.push(f);
+          q[f] = v;
+        }
+      }
+      src.options.forEach((o, i) => {
+        for (const lang of ['en', 'hi']) {
+          const v = clean(o[lang], 2000);
+          if (v && q.options[i] && v !== q.options[i][lang]) {
+            changed.push(`option ${excel.OPTIONS[i]} (${lang.toUpperCase()})`);
+            q.options[i][lang] = v;
+          }
+        }
+      });
+      const reveal = src.revealMap || {};
+      for (const l of excel.OPTIONS) {
+        const v = clean(reveal[l], 1000);
+        if (v && v !== (q.revealMap || {})[l]) {
+          changed.push(`reveals ${l}`);
+          q.revealMap = { ...(q.revealMap || {}), [l]: v };
+        }
+      }
+      if (changed.length) changes.push({ qid: q.qid, fields: changed });
+    }
+  }
+  const notInExam = [...incoming.keys()].filter((id) => !matched.has(id));
+  if (req.body.apply && changes.length) {
+    await store.saveQuestionBank(exam, normalizeSections(sections));
+    await audit.log(req, 'ADMIN_EDIT_TEXT', {
+      admin_username: 'admin',
+      exam_id: exam.id,
+      mode: 'update_from_file',
+      questions_changed: changes.length,
+      fields_changed: changes.reduce((n, c) => n + c.fields.length, 0),
+    });
+  }
+  res.json({ applied: !!req.body.apply && changes.length > 0, changes, notInExam });
 });
 
 // ---------------------------------------------------------------- audit trail (admin only)

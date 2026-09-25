@@ -253,6 +253,22 @@ download everything as Excel. Each exam's Excel download also includes an `Audit
 The Analytics tab shows **integrity signals** per participant (tab switches, time away from the exam tab, answer changes,
 language switches). The exam instructions tell participants that leaving the tab is recorded.
 
+## Leadership summaries, reports and wording updates
+
+- **Summary for each person** (exam → Participants → **Summary**): a short paragraph plus plain answers to *How did they do? Do
+  they know the rules? How do they handle difficult situations? Do they show our values? Did they take the exam seriously?
+  Anything to worry about? What should the team lead do next?* "Taking it seriously" is judged by time per answer: answers
+  chosen in under 5 seconds are too fast to have read the question, and many of them mark the result as **unreliable —
+  rushed**. The full answer list shows the **correct answer** next to every wrong, partial or concern answer.
+- **Team summary** (Analytics tab): the same kind of plain answers for the whole team — overall result, strong and weak
+  areas, most-missed questions (with the correct answer), behaviour pattern, who rushed, who needs attention. Charts and
+  detail are folded underneath.
+- **Report a problem**: during the exam, staff can report any question (unclear, wrong translation, more than one correct
+  answer, no correct answer, spelling, other). Reports appear in the exam's **Reports** tab and the Excel download.
+- **Update question wording from a file**: Import → "Update question wording in: …" changes only the text of matching
+  questions (by ID). Answer keys, scores and results stay as they are, so it is safe after people have submitted.
+- The Excel download adds **Leadership Summary** and **Question Reports** sheets, and each answer row includes the best answer.
+
 ## Capacity and reliability
 
 **Load test** (Supabase-style database, all 66 questions, everyone at the same moment):

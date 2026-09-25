@@ -81,6 +81,19 @@ const hi = {
   parts: 'भाग',
   totalParts: 'कुल भाग',
 
+  reportProblem: 'इस प्रश्न में समस्या की रिपोर्ट करें',
+  reportTitle: 'इस प्रश्न में क्या गलत है?',
+  reportReason_unclear: 'प्रश्न स्पष्ट नहीं है',
+  reportReason_translation: 'हिंदी / अंग्रेज़ी अनुवाद गलत है',
+  reportReason_multiple_correct: 'एक से अधिक उत्तर सही हैं',
+  reportReason_no_correct: 'कोई भी उत्तर सही नहीं है',
+  reportReason_spelling: 'वर्तनी या टाइपिंग की गलती',
+  reportReason_other: 'कुछ और',
+  reportComment: 'विवरण (वैकल्पिक)',
+  reportSend: 'रिपोर्ट भेजें',
+  reportThanks: 'धन्यवाद — आपकी रिपोर्ट व्यवस्थापक को भेज दी गई है।',
+  loggedInAs: '{name} के रूप में लॉग इन',
+
   // Review
   reviewTitle: 'अपने उत्तरों की समीक्षा करें',
   reviewHint: 'किसी प्रश्न पर वापस जाने के लिए उसकी पंक्ति पर क्लिक करें।',

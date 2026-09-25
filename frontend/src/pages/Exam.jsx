@@ -108,6 +108,10 @@ export default function Exam() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [saveState, setSaveState] = useState('idle');
+  const [reportOpen, setReportOpen] = useState(false);
+  const [reportReason, setReportReason] = useState('unclear');
+  const [reportComment, setReportComment] = useState('');
+  const [reportDone, setReportDone] = useState(false);
   const [, setTick] = useState(0);
 
   const offsetRef = useRef(0);
@@ -291,6 +295,15 @@ export default function Exam() {
     send({ type: 'flag', q: current, flagged: next });
   }
 
+  async function sendReport() {
+    try {
+      await api(`/exam/${id}/report`, { method: 'POST', body: { q: current, reason: reportReason, comment: reportComment, lang } });
+      setReportDone(true);
+    } catch {
+      setReportDone(true); // do not block the exam if the report cannot be sent
+    }
+  }
+
   async function begin() {
     setBusy(true);
     setError('');
@@ -356,7 +369,7 @@ export default function Exam() {
         <div className="exam-header-title">
           <strong>{data.exam.title}</strong>
           <span className="muted small">
-            {t('elapsed')}: <span className="mono">{formatDuration(elapsed)}</span>
+            {user ? `${pick(user.name, user.nameHi)} · ` : ''}{t('elapsed')}: <span className="mono">{formatDuration(elapsed)}</span>
           </span>
         </div>
         <div className="topbar-right">
@@ -423,6 +436,18 @@ export default function Exam() {
                     {t('clearAnswer')}
                   </button>
                 )}
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => {
+                    setReportReason('unclear');
+                    setReportComment('');
+                    setReportDone(false);
+                    setReportOpen(true);
+                  }}
+                >
+                  ⚠ {t('reportProblem')}
+                </button>
                 <span className={`muted small q-timer ${suggested && onQuestion > suggested ? 'over' : ''}`}>
                   {t('timeOnQuestion', { time: formatDuration(onQuestion) })}
                   {suggested > 0 && <> · {t('suggestedTime', { time: formatDuration(suggested) })}</>}
@@ -464,6 +489,39 @@ export default function Exam() {
         />
         {paletteOpen && <div className="palette-backdrop" onClick={() => setPaletteOpen(false)} />}
       </div>
+
+      {reportOpen && (
+        <Modal title={t('reportTitle')} onClose={() => setReportOpen(false)}>
+          {reportDone ? (
+            <>
+              <div className="alert alert-ok">{t('reportThanks')}</div>
+              <div className="modal-actions">
+                <button type="button" className="btn btn-primary" onClick={() => setReportOpen(false)}>OK</button>
+              </div>
+            </>
+          ) : (
+            <>
+              <p className="muted small">{t('questionOf', { n: current, total: questions.length })}</p>
+              <div className="stack-sm">
+                {['unclear', 'translation', 'multiple_correct', 'no_correct', 'spelling', 'other'].map((r) => (
+                  <label key={r} className={`option ${reportReason === r ? 'selected' : ''}`}>
+                    <input type="radio" name="report-reason" checked={reportReason === r} onChange={() => setReportReason(r)} />
+                    <span className="option-text">{t(`reportReason_${r}`)}</span>
+                  </label>
+                ))}
+              </div>
+              <label className="field" style={{ marginTop: '0.75rem' }}>
+                <span>{t('reportComment')}</span>
+                <textarea rows={3} maxLength={1000} value={reportComment} onChange={(e) => setReportComment(e.target.value)} />
+              </label>
+              <div className="modal-actions">
+                <button type="button" className="btn btn-secondary" onClick={() => setReportOpen(false)}>{t('cancel')}</button>
+                <button type="button" className="btn btn-primary" onClick={sendReport}>{t('reportSend')}</button>
+              </div>
+            </>
+          )}
+        </Modal>
+      )}
 
       {confirmOpen && (
         <Modal title={t('confirmTitle')} onClose={() => !busy && setConfirmOpen(false)}>

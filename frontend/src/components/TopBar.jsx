@@ -6,7 +6,7 @@ import Logo from './Logo.jsx';
 
 export default function TopBar({ children, showLang = true }) {
   const { user, logout } = useAuth();
-  const { t } = useLang();
+  const { t, pick } = useLang();
   const navigate = useNavigate();
   return (
     <header className="topbar">
@@ -15,6 +15,11 @@ export default function TopBar({ children, showLang = true }) {
         <span className="brand-name">{t('appName')}</span>
       </Link>
       <div className="topbar-right">
+        {user && user.role === 'participant' && (
+          <span className="small muted who" title={t('loggedInAs', { name: user.name })}>
+            👤 {pick(user.name, user.nameHi)} <span className="mono">({user.username})</span>
+          </span>
+        )}
         {children}
         {showLang && <LanguageToggle />}
         {user && (

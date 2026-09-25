@@ -254,7 +254,7 @@ function numberBank(sections) {
 }
 
 /** Results workbook for download: the four report sheets + the question bank. */
-function buildResultsWorkbook({ summary, responses, bank, analyticsAoa, auditRows }) {
+function buildResultsWorkbook({ summary, responses, bank, analyticsAoa, auditRows, extraSheets = [] }) {
   const wb = newWorkbook();
   setSheet(wb, SHEETS.summary, summary, unionKeys(summary));
   setSheet(wb, SHEETS.responses, responses, unionKeys(responses));
@@ -262,6 +262,7 @@ function buildResultsWorkbook({ summary, responses, bank, analyticsAoa, auditRow
   setSheetAoa(wb, SHEETS.analytics, analyticsAoa);
   setSheet(wb, SHEETS.sections, sectionRows(bank.sections), SECTION_HEADERS);
   setSheet(wb, SHEETS.questions, questionRows(bank.questions), QUESTION_HEADERS);
+  for (const x of extraSheets) if (x.rows.length) setSheet(wb, x.name, x.rows, unionKeys(x.rows));
   if (auditRows) setSheet(wb, 'Audit_Log', auditRows, unionKeys(auditRows));
   return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx', compression: true });
 }

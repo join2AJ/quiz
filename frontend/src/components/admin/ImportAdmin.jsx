@@ -37,7 +37,22 @@ export default function ImportAdmin() {
   useEffect(() => {
     api('/admin/exams').then((d) => setExams(d.exams)).catch(() => {});
   }, []);
-  const targetExam = exams.find((e) => e.id === target);
+  const updateId = target.startsWith('update:') ? target.slice(7) : '';
+  const updateExam = exams.find((e) => e.id === updateId);
+  const targetExam = updateId ? null : exams.find((e) => e.id === target);
+  const [textPreview, setTextPreview] = useState(null);
+
+  async function runTextUpdate(apply) {
+    setBusy(true);
+    setError('');
+    try {
+      setTextPreview(await api(`/admin/exams/${updateId}/update-text`, { method: 'POST', body: { database: db, apply } }));
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
   const [meta, setMeta] = useState({
     title: 'Pass Section Knowledge & Behaviour Assessment 2026',
     team: 'Pass Section — LIAL',
@@ -142,8 +157,13 @@ export default function ImportAdmin() {
           <legend>Where should these questions go?</legend>
           <label className="field">
             <span>Import into</span>
-            <select value={target} onChange={(e) => setTarget(e.target.value)}>
+            <select value={target} onChange={(e) => { setTarget(e.target.value); setTextPreview(null); }}>
               <option value="">A new exam</option>
+              {exams.map((e) => (
+                <option key={`u-${e.id}`} value={`update:${e.id}`}>
+                  Update question wording in: {e.title}
+                </option>
+              ))}
               {exams.map((e) => (
                 <option key={e.id} value={e.id} disabled={e.submitted > 0 || e.inProgress > 0}>
                   Add to: {e.title} ({e.questionCount} questions{e.submitted > 0 || e.inProgress > 0 ? ' — already started, locked' : ''})
@@ -151,6 +171,33 @@ export default function ImportAdmin() {
               ))}
             </select>
           </label>
+          {updateExam && (
+            <div className="stack-sm">
+              <p className="small muted">
+                Updates only the wording (questions, situations, options, explanations — English and Hindi) of questions whose ID
+                matches (K01, B05…). Answer keys, scoring and results are not changed, so this is safe even after people have submitted.
+              </p>
+              {!textPreview && (
+                <div><button type="button" className="btn btn-secondary" disabled={busy} onClick={() => runTextUpdate(false)}>Preview changes</button></div>
+              )}
+              {textPreview && (
+                textPreview.applied ? (
+                  <div className="alert alert-ok">Updated the wording of {textPreview.changes.length} question(s) in “{updateExam.title}”.</div>
+                ) : textPreview.changes.length === 0 ? (
+                  <div className="alert">No wording differences found.</div>
+                ) : (
+                  <>
+                    <div className="alert alert-warn">
+                      {textPreview.changes.length} question(s) will change:{' '}
+                      {textPreview.changes.map((c) => `${c.qid} (${c.fields.length})`).join(', ')}
+                      {textPreview.notInExam.length > 0 && <div className="small">Not in this exam (ignored): {textPreview.notInExam.join(', ')}</div>}
+                    </div>
+                    <div><button type="button" className="btn btn-primary btn-lg" disabled={busy} onClick={() => runTextUpdate(true)}>Apply wording changes</button></div>
+                  </>
+                )
+              )}
+            </div>
+          )}
           {targetExam && (
             <p className="small muted">
               The file's {info.sections.length} section(s) will be added after the existing {targetExam.sectionCount} section(s) of
@@ -168,7 +215,7 @@ export default function ImportAdmin() {
         </fieldset>
       )}
 
-      {info && !done && !targetExam && (
+      {info && !done && !targetExam && !updateExam && (
         <fieldset className="card">
           <legend>Exam details</legend>
           <div className="form-grid">

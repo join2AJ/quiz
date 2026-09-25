@@ -387,6 +387,17 @@ span.tag-chip { cursor: default; padding: 0.1rem 0.5rem; font-size: 0.75rem; }
 .posture-card { border: 1px solid var(--border); border-radius: var(--radius); padding: 0.9rem 1rem; }
 .posture-counts { display: flex; flex-wrap: wrap; gap: 0.75rem; font-size: 0.85rem; margin: 0.4rem 0; }
 
+.who { white-space: nowrap; }
+@media (max-width: 860px) { .who .mono { display: none; } }
+.leader-card { border-left: 5px solid var(--primary); }
+.leader-qa { display: grid; gap: 0.6rem; margin: 0.75rem 0 0; }
+.leader-qa dt { font-weight: 700; font-size: 0.9rem; }
+.leader-qa dd { margin: 0.1rem 0 0; }
+.headline-rushed, .headline-needs { background: var(--danger-soft); color: var(--danger); }
+.headline-strong { background: var(--ok-soft); color: var(--ok); }
+.headline-track { background: var(--primary-soft); color: var(--primary); }
+.headline-dev { background: var(--warn-soft); color: var(--warn); }
+
 /* Charts */
 .chart { margin: 0; }
 .chart-head { display: flex; justify-content: space-between; align-items: center; font-weight: 600; margin-bottom: 0.5rem; }

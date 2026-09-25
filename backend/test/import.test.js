@@ -100,6 +100,8 @@ test('import database, score behaviour with partial credit, audit chain', async 
   await ev({ type: 'answer', q: 3, option: 'A' }); // B01 preferred-not-best -> 50% of w2 = 1
   await ev({ type: 'view', q: 4, via: 'button' });
   await ev({ type: 'answer', q: 4, option: 'C' }); // B02 concern -> 0 of w3
+  // Participant reports a problem with a question.
+  assert.equal((await p('POST', `/api/exam/${examId}/report`, { q: 2, reason: 'translation', comment: 'Hindi option B is wrong', lang: 'hi' })).status, 200);
   await ev({ type: 'review' });
   await ev({ type: 'submit_attempt' });
   await p('POST', `/api/exam/${examId}/submit`, {});
@@ -162,6 +164,33 @@ test('import database, score behaviour with partial credit, audit chain', async 
   assert.equal(key['Partial Credit Options'], 'A');
   assert.equal(key['Concern Options'], 'C');
 
+  // Reports are visible to the admin.
+  const reps = (await admin('GET', `/api/admin/exams/${examId}/reports`)).data.reports;
+  assert.equal(reps.length, 1);
+  assert.equal(reps[0].qid, 'K02');
+  assert.equal(reps[0].reason, 'translation');
+
+  // Leadership summaries: individual and team.
+  assert.ok(detail.data.leadership && detail.data.leadership.paragraph.length > 20);
+  assert.ok(detail.data.leadership.answers.some((x) => x.q.startsWith('Did they take the exam seriously')));
+  assert.equal(detail.data.leadership.engagement.level, 'rushed'); // the test answers instantly
+  assert.equal(detail.data.responses.find((r) => r.QID === 'B02')['Best Answer'], 'D');
+  const anTeam = (await admin('GET', `/api/admin/exams/${examId}/analytics`)).data.team;
+  assert.ok(anTeam.answers.some((x) => x.q === 'Who needs attention?'));
+
+  // Update wording from a file: text changes, answer key does not.
+  const reworded = JSON.parse(JSON.stringify(database));
+  reworded.questions.knowledge[0].en.question = 'Knowledge Q1 — reworded?';
+  reworded.questions.knowledge[0].hi.options[1].text = 'नया विकल्प B';
+  const tp = await admin('POST', `/api/admin/exams/${examId}/update-text`, { database: reworded });
+  assert.equal(tp.data.applied, false);
+  assert.deepEqual(tp.data.changes.map((c) => c.qid), ['K01']);
+  await admin('POST', `/api/admin/exams/${examId}/update-text`, { database: reworded, apply: true });
+  const ed3 = (await admin('GET', `/api/admin/exams/${examId}`)).data.sections[0].questions[0];
+  assert.equal(ed3.textEn, 'Knowledge Q1 — reworded?');
+  assert.equal(ed3.options[1].hi, 'नया विकल्प B');
+  assert.equal(ed3.correct, 'B');
+
   // Find & replace: preview, then apply across questions and exam fields.
   const pv = await admin('POST', `/api/admin/exams/${examId}/replace`, { find: 'Knowledge Q', replace: 'Rule Q' });
   assert.equal(pv.data.applied, false);
@@ -169,7 +198,7 @@ test('import database, score behaviour with partial credit, audit chain', async 
   const ap = await admin('POST', `/api/admin/exams/${examId}/replace`, { find: 'Knowledge Q', replace: 'Rule Q', apply: true });
   assert.equal(ap.data.applied, true);
   const afterReplace = await admin('GET', `/api/admin/exams/${examId}`);
-  assert.equal(afterReplace.data.sections[0].questions[0].textEn, 'Rule Q1?');
+  assert.equal(afterReplace.data.sections[0].questions[0].textEn, 'Rule Q1 — reworded?');
   assert.deepEqual(afterReplace.data.sections[1].questions[1].fullCredit, ['A']); // scoring untouched
 
   // Behaviour posture and tag analytics are computed per individual.

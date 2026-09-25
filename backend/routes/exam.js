@@ -276,6 +276,30 @@ router.post('/:id/event', async (req, res) => {
   res.json({ ok: true, savedAt: new Date().toISOString() });
 });
 
+// A participant reports a problem with a question (unclear, wrong translation…).
+// Stored in the audit log; admins see them under the exam's Reports tab.
+const REPORT_REASONS = ['unclear', 'translation', 'multiple_correct', 'no_correct', 'spelling', 'other'];
+router.post('/:id/report', async (req, res) => {
+  const exam = await loadAssignedExam(req, res);
+  if (!exam) return;
+  const bank = await cachedBank(exam);
+  const no = Number(req.body && req.body.q);
+  const question = bank.questions[no - 1];
+  if (!question) return res.status(400).json({ error: 'Invalid question' });
+  const reason = REPORT_REASONS.includes(req.body.reason) ? req.body.reason : 'other';
+  const comment = String(req.body.comment || '').trim().slice(0, 1000);
+  await audit.log(req, 'QUESTION_REPORTED', {
+    username: req.session.user.username,
+    exam_id: exam.id,
+    question_id: question.qid,
+    question_number: no,
+    reason,
+    comment,
+    language: req.body.lang === 'hi' ? 'hi' : 'en',
+  });
+  res.json({ ok: true });
+});
+
 router.post('/:id/submit', async (req, res) => {
   const exam = await loadAssignedExam(req, res);
   if (!exam) return;

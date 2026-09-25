@@ -26,6 +26,46 @@ const KIND_CLASS = {
   Unanswered: 'incorrect',
 };
 
+const HEADLINE_CLASS = {
+  'Result unreliable — rushed': 'headline-rushed',
+  'Needs attention': 'headline-needs',
+  'Strong performer': 'headline-strong',
+  'On track': 'headline-track',
+  'Needs development': 'headline-dev',
+};
+
+/** Plain-language summary for leaders: one paragraph and answers to the key questions. */
+function LeaderCard({ title, headline, paragraph, answers }) {
+  return (
+    <div className="card leader-card">
+      <div className="row-actions">
+        <h3 style={{ margin: 0 }}>{title}</h3>
+        {headline && <span className={`badge ${HEADLINE_CLASS[headline] || ''}`}>{headline}</span>}
+      </div>
+      <p style={{ marginBottom: 0 }}>{paragraph}</p>
+      <dl className="leader-qa">
+        {answers.map((x) => (
+          <div key={x.q}>
+            <dt>{x.q}</dt>
+            <dd>{x.list ? (
+              <ul style={{ margin: '0.2rem 0 0', paddingLeft: '1.1rem' }}>
+                {x.list.map((q) => (
+                  <li key={q.id}>
+                    <b>{q.id}</b> {q.category} — {q.accuracy}% scored
+                    {q.best && <span className="muted"> · correct answer <b>{q.best.letter}</b>: “{q.best.text}”</span>}
+                  </li>
+                ))}
+              </ul>
+            ) : x.a}</dd>
+          </div>
+        ))}
+      </dl>
+    </div>
+  );
+}
+
+const TOO_FAST = 5;
+
 function PostureCard({ p, compact = false }) {
   if (!p) return null;
   return (
@@ -116,7 +156,7 @@ function ParticipantsTab({ exam, participants, reload, onView }) {
                   <td className="num">{p.totalPct !== null ? `${p.totalPct}%` : '—'}</td>
                   <td className="row-actions nowrap">
                     {p.status === 'submitted' && (
-                      <button type="button" className="btn btn-ghost btn-sm" onClick={() => onView(p)}>View</button>
+                      <button type="button" className="btn btn-ghost btn-sm" onClick={() => onView(p)}>Summary</button>
                     )}
                     {p.status !== 'not_started' && (
                       <button type="button" className="btn btn-ghost btn-sm" onClick={() => reset(p)}>Reset</button>
@@ -177,9 +217,13 @@ function ResultsTab({ participants, onView }) {
 function AnalyticsTab({ examId }) {
   const [a, setA] = useState(null);
   const [error, setError] = useState('');
+  const [teamSummary, setTeamSummary] = useState(null);
   useEffect(() => {
     api(`/admin/exams/${examId}/analytics`)
-      .then((d) => setA(d.analytics))
+      .then((d) => {
+        setA(d.analytics);
+        setTeamSummary(d.team);
+      })
       .catch((e) => setError(e.message));
   }, [examId]);
   if (error) return <div className="alert alert-error">{error}</div>;
@@ -188,6 +232,10 @@ function AnalyticsTab({ examId }) {
 
   return (
     <div className="stack">
+      {teamSummary && <LeaderCard title="Team summary" paragraph={teamSummary.paragraph} answers={teamSummary.answers} />}
+      <details className="card">
+        <summary><b>Detailed analytics</b> <span className="muted small">— charts, every question, behaviour patterns, individual profiles</span></summary>
+      <div className="stack" style={{ marginTop: '1rem' }}>
       <div className="stat-row">
         <div className="stat"><span className="stat-value">{a.participants}</span><span className="stat-label">Submissions</span></div>
         <div className="stat"><span className="stat-value">{a.averageScore}%</span><span className="stat-label">Average score</span></div>
@@ -405,64 +453,123 @@ function AnalyticsTab({ examId }) {
         </table>
       </div>
     </div>
+      </details>
+    </div>
   );
 }
 
 function ResultModal({ exam, participant, onClose }) {
   const [d, setD] = useState(null);
+  const [error, setError] = useState('');
   useEffect(() => {
-    api(`/admin/exams/${exam.id}/results/${encodeURIComponent(participant.username)}`).then(setD);
+    api(`/admin/exams/${exam.id}/results/${encodeURIComponent(participant.username)}`)
+      .then(setD)
+      .catch((e) => setError(e.message));
   }, [exam.id, participant.username]);
+  const L = d && d.leadership;
   return (
-    <Modal title={`${participant.name} — result`} onClose={onClose}>
-      {!d ? (
+    <Modal title={`${participant.name} — summary`} onClose={onClose}>
+      {error && <div className="alert alert-error">{error}</div>}
+      {!d && !error ? (
         <p className="muted">Loading…</p>
-      ) : (
+      ) : d && (
         <div className="stack modal-scroll">
-          <ResultCard exam={exam} result={d.result} />
-          {d.result.integrity && (
-            <div className="stat-row">
-              <div className="stat"><span className="stat-value">{d.result.integrity.tabSwitches}</span><span className="stat-label">Tab switches</span></div>
-              <div className="stat"><span className="stat-value mono">{formatDuration(d.result.integrity.hiddenSeconds)}</span><span className="stat-label">Time away from tab</span></div>
-              <div className="stat"><span className="stat-value">{d.result.integrity.answerChanges}</span><span className="stat-label">Answer changes</span></div>
-              <div className="stat"><span className="stat-value">{d.result.concernCount ?? 0}</span><span className="stat-label">Concern answers</span></div>
-            </div>
-          )}
+          {L && <LeaderCard title={`${participant.name}`} headline={L.headline} paragraph={L.paragraph} answers={L.answers} />}
+
+          <details>
+            <summary><b>Score card</b> <span className="muted small">— what the participant sees after the unlock date</span></summary>
+            <div style={{ marginTop: '0.75rem' }}><ResultCard exam={exam} result={d.result} /></div>
+          </details>
+
           {d.posture && (
-            <>
-              <h3>Behaviour posture</h3>
-              <PostureCard p={d.posture} compact />
-            </>
+            <details>
+              <summary><b>Behaviour details</b></summary>
+              <div style={{ marginTop: '0.75rem' }}><PostureCard p={d.posture} compact /></div>
+            </details>
           )}
-          <h3>Question-wise responses</h3>
-          <div className="table-wrap">
-            <table className="table table-compact">
-              <thead>
-                <tr><th>Q</th><th>Category</th><th>Selected</th><th>Result</th><th className="num">Points</th><th className="num">Time (s)</th><th className="num">Changed</th><th>Flag</th><th>What it reveals</th></tr>
-              </thead>
-              <tbody>
-                {d.responses.map((r) => (
-                  <tr key={r['Question No']}>
-                    <td>{r.QID || r['Question No']}</td>
-                    <td>{r.Category}</td>
-                    <td>{r['Option Selected']}</td>
-                    <td className={`kind-${KIND_CLASS[r['Response Type']] || (r['Correct Y/N'] === 'Y' ? 'correct' : 'incorrect')}`}>
-                      {r['Response Type'] || (r['Correct Y/N'] === 'Y' ? 'Correct' : 'Incorrect')}
-                    </td>
-                    <td className="num">{r.Points ?? (r['Correct Y/N'] === 'Y' ? 1 : 0)}{r.Weight ? `/${r.Weight}` : ''}</td>
-                    <td className="num">{r['Time on Question (seconds)']}</td>
-                    <td className="num">{r['Times Changed']}</td>
-                    <td>{r['Flagged Y/N'] === 'Y' ? '⚑' : ''}</td>
-                    <td className="small">{r.Interpretation || ''}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+
+          <details open>
+            <summary><b>Every answer</b> <span className="muted small">— with the correct answer where theirs was not the best; red time = under {TOO_FAST} s</span></summary>
+            <div className="table-wrap" style={{ marginTop: '0.5rem' }}>
+              <table className="table table-compact">
+                <thead>
+                  <tr><th>Q</th><th>Topic</th><th>Chose</th><th>Result</th><th>Correct answer</th><th className="num">Points</th><th className="num">Secs</th><th>What their choice shows</th></tr>
+                </thead>
+                <tbody>
+                  {d.responses.map((r) => {
+                    const kind = KIND_CLASS[r['Response Type']] || (r['Correct Y/N'] === 'Y' ? 'correct' : 'incorrect');
+                    const secs = Number(r['Active Time on Question (seconds)'] ?? r['Time on Question (seconds)']) || 0;
+                    const answered = r['Option Selected'] && r['Option Selected'] !== '—';
+                    return (
+                      <tr key={r['Question No']}>
+                        <td>{r.QID || r['Question No']}</td>
+                        <td className="small">{r.Category}</td>
+                        <td><b>{r['Option Selected']}</b></td>
+                        <td className={`kind-${kind}`}>{r['Response Type'] || (r['Correct Y/N'] === 'Y' ? 'Correct' : 'Incorrect')}</td>
+                        <td className="small">
+                          {kind === 'correct' ? '✓' : r['Best Answer'] ? (
+                            <>
+                              <b>{r['Best Answer']}</b>: {r['Best Answer Text']}
+                              {r['Also Accepted'] && <span className="muted"> (also accepted: {r['Also Accepted']})</span>}
+                            </>
+                          ) : '—'}
+                        </td>
+                        <td className="num">{r.Points ?? (r['Correct Y/N'] === 'Y' ? 1 : 0)}{r.Weight ? `/${r.Weight}` : ''}</td>
+                        <td className={`num ${answered && secs < TOO_FAST ? 'kind-concern' : ''}`}>{secs}</td>
+                        <td className="small">{r.Interpretation || ''}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </details>
         </div>
       )}
       <div className="modal-actions"><button type="button" className="btn btn-secondary" onClick={onClose}>Close</button></div>
     </Modal>
+  );
+}
+
+/** Problems with questions reported by participants during the exam. */
+function ReportsTab({ examId }) {
+  const [reports, setReports] = useState(null);
+  useEffect(() => {
+    api(`/admin/exams/${examId}/reports`).then((d) => setReports(d.reports)).catch(() => setReports([]));
+  }, [examId]);
+  const REASON = {
+    unclear: 'Question unclear',
+    translation: 'Translation wrong',
+    multiple_correct: 'More than one correct answer',
+    no_correct: 'No correct answer',
+    spelling: 'Spelling / typing mistake',
+    other: 'Other',
+  };
+  if (!reports) return <p className="muted">Loading…</p>;
+  if (!reports.length) return <p className="muted">No question has been reported. Staff can report a problem with any question during the exam.</p>;
+  const byQ = {};
+  for (const r of reports) byQ[r.qid] = (byQ[r.qid] || 0) + 1;
+  return (
+    <div className="stack">
+      <p className="muted small">Most reported: {Object.entries(byQ).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([q, n]) => `${q} (${n})`).join(', ')}. Fix wording with Edit or Find &amp; replace.</p>
+      <div className="table-wrap">
+        <table className="table table-compact">
+          <thead><tr><th>When</th><th>Question</th><th>Problem</th><th>Details</th><th>Reported by</th><th>Lang</th></tr></thead>
+          <tbody>
+            {reports.map((r) => (
+              <tr key={r.seq}>
+                <td className="nowrap small">{new Date(r.at).toLocaleString()}</td>
+                <td><b>{r.qid}</b></td>
+                <td>{REASON[r.reason] || r.reason}</td>
+                <td className="small">{r.comment || '—'}</td>
+                <td className="small">{r.name}</td>
+                <td>{(r.language || '').toUpperCase()}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
   );
 }
 
@@ -531,7 +638,7 @@ export default function ExamDetail() {
         <div className="stat"><span className="stat-value">{Math.max(0, exam.participants - exam.submitted - exam.inProgress)}</span><span className="stat-label">Not started</span></div>
       </div>
       <div className="tabs" role="tablist">
-        {[['questions', `Questions (${exam.questionCount})`], ['tags', 'Tags'], ['participants', 'Participants'], ['results', 'Results'], ['analytics', 'Analytics']].map(([k, label]) => (
+        {[['questions', `Questions (${exam.questionCount})`], ['tags', 'Tags'], ['participants', 'Participants'], ['results', 'Results'], ['analytics', 'Analytics'], ['reports', 'Reports']].map(([k, label]) => (
           <button key={k} type="button" role="tab" aria-selected={tab === k} className={tab === k ? 'active' : ''} onClick={() => setTab(k)}>
             {label}
           </button>
@@ -542,6 +649,7 @@ export default function ExamDetail() {
       {tab === 'participants' && <ParticipantsTab exam={exam} participants={participants} reload={reload} onView={setViewing} />}
       {tab === 'results' && <ResultsTab participants={participants} onView={setViewing} />}
       {tab === 'analytics' && <AnalyticsTab examId={id} />}
+      {tab === 'reports' && <ReportsTab examId={id} />}
       {replacing && <FindReplace examId={id} onClose={() => setReplacing(false)} onDone={reload} />}
       {viewing && <ResultModal exam={exam} participant={viewing} onClose={() => setViewing(null)} />}
     </div>

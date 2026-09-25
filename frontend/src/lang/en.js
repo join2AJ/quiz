@@ -81,6 +81,19 @@ const en = {
   parts: 'Parts',
   totalParts: 'Total parts',
 
+  reportProblem: 'Report a problem with this question',
+  reportTitle: 'What is wrong with this question?',
+  reportReason_unclear: 'The question is unclear',
+  reportReason_translation: 'The Hindi / English translation is wrong',
+  reportReason_multiple_correct: 'More than one answer is correct',
+  reportReason_no_correct: 'None of the answers is correct',
+  reportReason_spelling: 'Spelling or typing mistake',
+  reportReason_other: 'Something else',
+  reportComment: 'Details (optional)',
+  reportSend: 'Send report',
+  reportThanks: 'Thank you — your report has been sent to the administrator.',
+  loggedInAs: 'Logged in as {name}',
+
   // Review
   reviewTitle: 'Review your answers',
   reviewHint: 'Click any row to go back to that question.',
