@@ -242,7 +242,15 @@ function SectionEditor({ section, index, onChange, onRemove, canRemove }) {
         <label className="field"><span>Description (English)</span><textarea rows={2} value={section.description} onChange={(e) => set('description', e.target.value)} /></label>
         <label className="field"><span>Description (Hindi)</span><textarea rows={2} value={section.descriptionHi} onChange={(e) => set('descriptionHi', e.target.value)} /></label>
       </div>
-      <h3>Questions ({section.questions.length})</h3>
+      <div className="row-actions">
+        <h3 style={{ margin: 0 }}>Questions ({section.questions.length})</h3>
+        {section.questions.length > 0 && (
+          <>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={(e) => e.currentTarget.closest('fieldset').querySelectorAll('details.q-editor').forEach((d) => { d.open = true; })}>Expand all</button>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={(e) => e.currentTarget.closest('fieldset').querySelectorAll('details.q-editor').forEach((d) => { d.open = false; })}>Collapse all</button>
+          </>
+        )}
+      </div>
       <div className="stack-sm">
         {section.questions.map((q, i) => (
           <QuestionEditor

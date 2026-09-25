@@ -6,6 +6,7 @@ import ScoreBar from '../ScoreBar.jsx';
 import Modal from '../Modal.jsx';
 import { ResultCard } from '../../pages/Result.jsx';
 import { AddParticipantForm, CsvUpload } from './ParticipantForms.jsx';
+import QuestionBank from './QuestionBank.jsx';
 
 const KIND = {
   correct: 'Full credit',
@@ -381,13 +382,17 @@ export default function ExamDetail() {
   const navigate = useNavigate();
   const [exam, setExam] = useState(null);
   const [participants, setParticipants] = useState([]);
-  const [tab, setTab] = useState('participants');
+  const [tab, setTab] = useState('questions');
+  const [sections, setSections] = useState([]);
   const [viewing, setViewing] = useState(null);
   const [error, setError] = useState('');
 
   const reload = useCallback(() => {
     api(`/admin/exams/${id}`)
-      .then((d) => setExam({ ...d.exam, questionCount: d.sections.reduce((n, s) => n + s.questions.length, 0), sectionCount: d.sections.length }))
+      .then((d) => {
+        setSections(d.sections);
+        setExam({ ...d.exam, questionCount: d.sections.reduce((n, s) => n + s.questions.length, 0), sectionCount: d.sections.length });
+      })
       .catch((e) => setError(e.message));
     api(`/admin/exams/${id}/participants`).then((d) => setParticipants(d.participants));
   }, [id]);
@@ -435,12 +440,13 @@ export default function ExamDetail() {
         <div className="stat"><span className="stat-value">{Math.max(0, exam.participants - exam.submitted - exam.inProgress)}</span><span className="stat-label">Not started</span></div>
       </div>
       <div className="tabs" role="tablist">
-        {[['participants', 'Participants'], ['results', 'Results'], ['analytics', 'Analytics']].map(([k, label]) => (
+        {[['questions', `Questions (${exam.questionCount})`], ['participants', 'Participants'], ['results', 'Results'], ['analytics', 'Analytics']].map(([k, label]) => (
           <button key={k} type="button" role="tab" aria-selected={tab === k} className={tab === k ? 'active' : ''} onClick={() => setTab(k)}>
             {label}
           </button>
         ))}
       </div>
+      {tab === 'questions' && <QuestionBank sections={sections} dimensions={(exam.config || {}).dimensions || {}} />}
       {tab === 'participants' && <ParticipantsTab exam={exam} participants={participants} reload={reload} onView={setViewing} />}
       {tab === 'results' && <ResultsTab participants={participants} onView={setViewing} />}
       {tab === 'analytics' && <AnalyticsTab examId={id} />}
