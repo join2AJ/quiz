@@ -1,5 +1,5 @@
 const express = require('express');
-const excel = require('../services/excelService');
+const store = require('../services/store');
 const scoring = require('../services/scoringService');
 const { publicExam, isUnlocked, attemptInfo } = require('./exam');
 
@@ -15,11 +15,14 @@ function resultCard(exam, attempt) {
 }
 
 // Participant: only their own result, only after the unlock date.
-router.get('/:id', (req, res) => {
+router.get('/:id', async (req, res) => {
   const { username } = req.session.user;
-  const exam = excel.getExam(req.params.id);
-  if (!exam || !excel.isAssigned(exam.id, username)) return res.status(404).json({ error: 'Not found' });
-  const attempt = excel.getAttempt(exam.id, username);
+  const [exam, assigned, attempt] = await Promise.all([
+    store.getExam(req.params.id),
+    store.isAssigned(req.params.id, username),
+    store.getAttempt(req.params.id, username),
+  ]);
+  if (!exam || !assigned) return res.status(404).json({ error: 'Not found' });
   if (!attempt || attempt.status !== 'submitted' || !attempt.result) {
     return res.status(404).json({ error: 'No submission found' });
   }

@@ -4,7 +4,7 @@ const crypto = require('crypto');
 const express = require('express');
 const cookieSession = require('cookie-session');
 const config = require('./config');
-const excel = require('./services/excelService');
+const store = require('./services/store');
 const authCheck = require('./middleware/authCheck');
 const roleCheck = require('./middleware/roleCheck');
 
@@ -12,12 +12,11 @@ if (!config.adminPassword) {
   console.warn('[warn] ADMIN_PASSWORD is not set — admin login is disabled. Copy .env.example to .env and set it.');
 }
 let sessionSecret = config.sessionSecret;
+const missingServerlessSecret = config.isServerless && !sessionSecret;
 if (!sessionSecret) {
   sessionSecret = crypto.randomBytes(32).toString('hex');
   console.warn('[warn] SESSION_SECRET is not set — using a random secret; everyone is logged out on restart.');
 }
-
-excel.ensureDirs();
 
 const app = express();
 app.disable('x-powered-by');
@@ -50,17 +49,34 @@ app.use('/api', (req, res, next) => {
   return next();
 });
 
-app.get('/api/health', (req, res) => res.json({ ok: true }));
-app.get('/api/public/settings', (req, res) => {
-  const version = excel.getSetting('logoVersion');
+// Health check: also verifies storage is reachable (Supabase tables exist, etc.).
+// On Netlify every function instance would pick its own random secret, so
+// logins would randomly break — refuse to run without SESSION_SECRET.
+app.use('/api', (req, res, next) => {
+  if (missingServerlessSecret && req.path !== '/health') {
+    return res.status(503).json({ error: 'SESSION_SECRET is not set. Add it in the Netlify environment variables and redeploy.' });
+  }
+  return next();
+});
+
+app.get('/api/health', async (req, res) => {
+  try {
+    const info = await store.init();
+    res.json({ ok: true, ...info, adminConfigured: !!config.adminPassword, sessionSecretConfigured: !!config.sessionSecret });
+  } catch (err) {
+    res.status(503).json({ ok: false, store: store.kind, error: err.message, adminConfigured: !!config.adminPassword });
+  }
+});
+app.get('/api/public/settings', async (req, res) => {
+  const version = await store.getSetting('logoVersion');
   res.json({ logoUrl: version ? `/api/logo?v=${version}` : null });
 });
-app.get('/api/logo', (req, res) => {
-  const type = excel.getSetting('logoType');
-  if (!type || !fs.existsSync(config.logoFile)) return res.status(404).end();
-  res.setHeader('Content-Type', type);
+app.get('/api/logo', async (req, res) => {
+  const logo = await store.getLogo();
+  if (!logo) return res.status(404).end();
+  res.setHeader('Content-Type', logo.type);
   res.setHeader('Cache-Control', 'public, max-age=86400');
-  return res.send(fs.readFileSync(config.logoFile));
+  return res.send(logo.buffer);
 });
 
 app.use('/api/auth', require('./routes/auth'));
@@ -79,13 +95,14 @@ if (fs.existsSync(config.frontendDist)) {
 app.use((err, req, res, next) => {
   const status = err.status || err.statusCode || 500;
   if (status >= 500) console.error(err);
-  res.status(status).json({ error: status >= 500 ? 'Something went wrong' : err.message });
+  // 503 = storage not configured/reachable: show the reason so it can be fixed.
+  res.status(status).json({ error: status >= 500 && status !== 503 ? 'Something went wrong' : err.message });
 });
 
 if (require.main === module) {
   app.listen(config.port, () => {
     console.log(`PassSection Quiz API listening on http://localhost:${config.port}`);
-    console.log(`Data directory: ${config.dataDir}`);
+    console.log(store.kind === 'supabase' ? 'Storage: Supabase' : `Storage: Excel files in ${config.dataDir}`);
   });
 }
 

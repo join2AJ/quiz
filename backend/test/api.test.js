@@ -8,6 +8,12 @@ const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'psq-test-'));
 process.env.DATA_DIR = dataDir;
 process.env.ADMIN_PASSWORD = 'admin-secret';
 process.env.SESSION_SECRET = 'test-secret';
+// Set TEST_SUPABASE_URL + TEST_SUPABASE_KEY to run the same flow against Supabase/PostgREST.
+const useSupabase = !!process.env.TEST_SUPABASE_URL;
+if (useSupabase) {
+  process.env.SUPABASE_URL = process.env.TEST_SUPABASE_URL;
+  process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.TEST_SUPABASE_KEY;
+}
 
 const XLSX = require('xlsx');
 const app = require('../server');
@@ -142,5 +148,18 @@ test('full admin + participant flow', async () => {
   const summary = XLSX.utils.sheet_to_json(wb.Sheets['Participants Summary']);
   assert.equal(summary[0].Name, 'Asha Singh');
   assert.equal(summary[0]['Section 1 Score %'], 50);
-  assert.ok(fs.existsSync(path.join(dataDir, 'exams', 'Test_Exam_2026-09-25_Results.xlsx')));
+  assert.equal(created.data.exam.fileName, 'Test_Exam_2026-09-25_Results.xlsx');
+  if (!useSupabase) assert.ok(fs.existsSync(path.join(dataDir, 'exams', 'Test_Exam_2026-09-25_Results.xlsx')));
+
+  const health = await admin('GET', '/api/health');
+  assert.equal(health.data.store, useSupabase ? 'supabase' : 'files');
+
+  // Reset lets the participant retake; their rows leave the results.
+  await admin('DELETE', `/api/admin/exams/${examId}/attempts/asha`);
+  const after = await admin('GET', `/api/admin/exams/${examId}/analytics`);
+  assert.equal(after.data.analytics.participants, 0);
+
+  // Deleting the exam removes everything tied to it.
+  await admin('DELETE', `/api/admin/exams/${examId}`);
+  assert.equal((await admin('GET', `/api/admin/exams/${examId}`)).status, 404);
 });

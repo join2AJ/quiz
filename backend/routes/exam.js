@@ -1,5 +1,6 @@
 const express = require('express');
-const excel = require('../services/excelService');
+const store = require('../services/store');
+const { OPTIONS } = require('../services/excelService');
 const timer = require('../services/timerService');
 const scoring = require('../services/scoringService');
 
@@ -62,9 +63,8 @@ function progressOf(attempt) {
   return progress;
 }
 
-function examView(exam, username) {
-  const bank = excel.getQuestionBank(exam);
-  const attempt = excel.getAttempt(exam.id, username);
+async function examView(exam, username) {
+  const [bank, attempt] = await Promise.all([store.getQuestionBank(exam), store.getAttempt(exam.id, username)]);
   const view = {
     exam: publicExam(exam),
     sections: bank.sections.map((s) => ({
@@ -83,58 +83,61 @@ function examView(exam, username) {
 }
 
 /** Loads the exam and verifies the participant is assigned to it (404 otherwise). */
-function loadAssignedExam(req, res) {
-  const exam = excel.getExam(req.params.id);
-  if (!exam || !excel.isAssigned(exam.id, req.session.user.username)) {
+async function loadAssignedExam(req, res) {
+  const [exam, assigned] = await Promise.all([
+    store.getExam(req.params.id),
+    store.isAssigned(req.params.id, req.session.user.username),
+  ]);
+  if (!exam || !assigned) {
     res.status(404).json({ error: 'Exam not found' });
     return null;
   }
   return exam;
 }
 
-router.get('/mine', (req, res) => {
+router.get('/mine', async (req, res) => {
   const { username } = req.session.user;
-  const ids = excel.getAssignments().filter((a) => a.username === username).map((a) => a.examId);
-  const exams = excel
-    .getExams()
-    .filter((e) => ids.includes(e.id))
-    .map((e) => ({ ...publicExam(e), attempt: attemptInfo(e, excel.getAttempt(e.id, username)) }))
+  const ids = (await store.getAssignments()).filter((a) => a.username === username).map((a) => a.examId);
+  const mine = (await store.getExams()).filter((e) => ids.includes(e.id));
+  const attempts = await Promise.all(mine.map((e) => store.getAttempt(e.id, username)));
+  const exams = mine
+    .map((e, i) => ({ ...publicExam(e), attempt: attemptInfo(e, attempts[i]) }))
     .sort((a, b) => String(b.examDate).localeCompare(String(a.examDate)));
   res.json({ exams });
 });
 
-router.get('/:id', (req, res) => {
-  const exam = loadAssignedExam(req, res);
+router.get('/:id', async (req, res) => {
+  const exam = await loadAssignedExam(req, res);
   if (!exam) return;
-  res.json(examView(exam, req.session.user.username));
+  res.json(await examView(exam, req.session.user.username));
 });
 
-router.post('/:id/start', (req, res) => {
-  const exam = loadAssignedExam(req, res);
+router.post('/:id/start', async (req, res) => {
+  const exam = await loadAssignedExam(req, res);
   if (!exam) return;
   const { username } = req.session.user;
-  const existing = excel.getAttempt(exam.id, username);
+  const existing = await store.getAttempt(exam.id, username);
   if (!existing) {
     if (exam.status !== 'Active') return res.status(409).json({ error: 'This exam is not open.' });
-    const bank = excel.getQuestionBank(exam);
+    const bank = await store.getQuestionBank(exam);
     if (!bank.questions.length) return res.status(409).json({ error: 'This exam has no questions yet.' });
     const state = timer.recordView({}, 1);
-    excel.saveAttempt(exam.id, {
+    await store.saveAttempt(exam.id, {
       username,
       status: 'in_progress',
       startedAt: new Date().toISOString(),
       state,
     });
   }
-  res.json(examView(exam, username));
+  res.json(await examView(exam, username));
 });
 
-router.post('/:id/event', (req, res) => {
-  const exam = loadAssignedExam(req, res);
+router.post('/:id/event', async (req, res) => {
+  const exam = await loadAssignedExam(req, res);
   if (!exam) return;
-  const attempt = excel.getAttempt(exam.id, req.session.user.username);
+  const attempt = await store.getAttempt(exam.id, req.session.user.username);
   if (!attempt || attempt.status !== 'in_progress') return res.status(409).json({ error: 'Exam not in progress' });
-  const total = excel.getQuestionBank(exam).questions.length;
+  const total = (await store.getQuestionBank(exam)).questions.length;
   const { type, q, option, flagged } = req.body || {};
   const no = Number(q);
   if (!Number.isInteger(no) || no < 1 || no > total) return res.status(400).json({ error: 'Invalid question' });
@@ -142,33 +145,32 @@ router.post('/:id/event', (req, res) => {
   if (type === 'view') timer.recordView(attempt.state, no);
   else if (type === 'answer') {
     const opt = String(option || '').toUpperCase();
-    if (opt && !excel.OPTIONS.includes(opt)) return res.status(400).json({ error: 'Invalid option' });
+    if (opt && !OPTIONS.includes(opt)) return res.status(400).json({ error: 'Invalid option' });
     timer.recordAnswer(attempt.state, no, opt);
   } else if (type === 'flag') timer.recordFlag(attempt.state, no, !!flagged);
   else return res.status(400).json({ error: 'Invalid event' });
 
-  excel.saveAttempt(exam.id, attempt);
+  await store.saveAttempt(exam.id, attempt);
   res.json({ ok: true, savedAt: new Date().toISOString() });
 });
 
-router.post('/:id/submit', (req, res) => {
-  const exam = loadAssignedExam(req, res);
+router.post('/:id/submit', async (req, res) => {
+  const exam = await loadAssignedExam(req, res);
   if (!exam) return;
   const { username } = req.session.user;
-  const attempt = excel.getAttempt(exam.id, username);
+  const attempt = await store.getAttempt(exam.id, username);
   if (!attempt) return res.status(409).json({ error: 'Exam not started' });
   if (attempt.status === 'submitted') return res.json({ attempt: attemptInfo(exam, attempt) });
 
-  const bank = excel.getQuestionBank(exam);
-  const user = excel.getUser(username);
+  const [bank, user] = await Promise.all([store.getQuestionBank(exam), store.getUser(username)]);
   attempt.submittedAt = new Date().toISOString();
   timer.finalize(attempt.state, new Date(attempt.submittedAt).getTime());
   attempt.status = 'submitted';
 
   const { result, summaryRow, responseRows } = scoring.scoreAttempt({ exam, bank, user, attempt });
-  excel.appendSubmission(exam, summaryRow, responseRows, scoring.buildAnalyticsSheet);
+  await store.saveSubmission(exam, summaryRow, responseRows, scoring.buildAnalyticsSheet);
   attempt.result = result;
-  excel.saveAttempt(exam.id, attempt);
+  await store.saveAttempt(exam.id, attempt);
   res.json({ attempt: attemptInfo(exam, attempt), name: user.name });
 });
 

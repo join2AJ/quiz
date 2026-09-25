@@ -7,7 +7,7 @@ stored in `.xlsx` files.
 
 - **Frontend:** React + Vite (`frontend/`)
 - **Backend:** Node.js + Express (`backend/`)
-- **Storage:** Excel files via SheetJS (`xlsx`) in `backend/data/` (or `DATA_DIR`)
+- **Storage:** Supabase Postgres when `SUPABASE_URL` is set (needed on Netlify); otherwise Excel files via SheetJS in `backend/data/`. The Excel report is always available as a download
 - **Auth:** username + password, bcrypt-hashed passwords, signed session cookie
 
 ---
@@ -157,26 +157,48 @@ lost on every redeploy or restart. Always download the Excel files regularly as 
 
 Any other Node host works the same way: `npm install && npm run build`, then `npm start`.
 
-### Netlify (frontend only) + Railway/Render (backend)
+### Netlify + Supabase (recommended, no server to manage)
 
-Netlify serves static files only. It cannot run the Express server or keep the Excel files, so the
-backend **must** run on Railway or Render as described above. Netlify can host the frontend and
-forward `/api/*` to the backend.
+On Netlify the whole app runs in one site: the React pages are static files, and the API runs as a
+Netlify Function (`netlify/functions/api.js`). Netlify has no permanent disk, so data is stored in a
+free **Supabase** Postgres database. Excel reports are generated from it whenever you click
+**Download Excel**.
 
-1. Deploy the backend on Railway or Render first (steps above) and note its URL, e.g.
-   `https://pass-section-quiz.up.railway.app`. Add the variable `TRUST_PROXY=2` there.
-2. In Netlify, import this repo. `netlify.toml` already sets the build: base directory `frontend`,
-   command `npm run build && node netlify-redirects.mjs`, publish directory `dist`.
-3. In Netlify, go to **Site configuration → Environment variables** and add
-   `BACKEND_URL = https://pass-section-quiz.up.railway.app` (your backend URL, without a trailing slash).
-4. Trigger a new deploy. The build writes `dist/_redirects` so that:
-   - `/api/*` is proxied to the backend (login cookies keep working because the browser only sees
-     your Netlify domain), and
-   - every other path serves `index.html`, so links like `/admin/exams/...` don't return
-     "Page not found".
+**1. Create the database (Supabase, free)**
+1. Sign up at <https://supabase.com> and click **New project**. Pick a region close to your users
+   (e.g. Mumbai) and any database password.
+2. When the project is ready, open **SQL Editor → New query**, paste the whole of
+   [`supabase/schema.sql`](supabase/schema.sql) and click **Run**. It creates the `psq_*` tables and
+   is safe to run again.
+3. Open **Project Settings → API** and copy:
+   - **Project URL**, e.g. `https://abcdefgh.supabase.co`
+   - the **service_role** secret key (not the anon key). Keep it secret: it is only ever used on
+     the server.
 
-If the login page says **"Cannot reach the server"**, `BACKEND_URL` is missing or wrong, or the
-backend is not running.
+**2. Deploy on Netlify**
+1. **Add new site → Import an existing project**, then pick this GitHub repo and branch.
+   `netlify.toml` already sets everything (build command `npm run build`, publish `frontend/dist`,
+   functions in `netlify/functions`).
+2. **Site configuration → Environment variables**. Add:
+
+   | Key | Value |
+   |---|---|
+   | `ADMIN_PASSWORD` | the admin login password |
+   | `SESSION_SECRET` | a long random string |
+   | `SUPABASE_URL` | the Project URL from step 1 |
+   | `SUPABASE_SERVICE_ROLE_KEY` | the service_role key from step 1 |
+
+3. **Deploys → Trigger deploy → Clear cache and deploy site**.
+4. Check `https://<your-site>.netlify.app/api/health`. It should show
+   `{"ok":true,"store":"supabase",...}`. If it doesn't, the message says what is missing.
+5. Sign in as `admin`.
+
+Notes:
+- The public anon key cannot read anything: every table has Row Level Security on with no policies,
+  and only the server uses the service_role key.
+- Large CSV uploads are sent in batches of 50 rows to stay within Netlify's function time limit.
+- The same Supabase settings also work on Railway/Render or locally. Without them, the app stores
+  Excel files on disk as before.
 
 ## 7. Security notes
 
@@ -206,11 +228,13 @@ pass-section-quiz/
 ├── backend/                  Express
 │   ├── routes/               auth, exam, result, admin
 │   ├── middleware/           authCheck, roleCheck
-│   ├── services/             excelService, scoringService, timerService
+│   ├── services/             excelService, scoringService, timerService, store/ (fileStore, supabaseStore)
 │   ├── data/                 Excel files (runtime; git-ignored)
 │   ├── test/                 API tests (node --test)
 │   └── server.js
-├── netlify.toml              Netlify build (frontend only; proxies /api to the backend)
+├── netlify.toml              Netlify build + /api → function rewrite
+├── netlify/functions/api.js  Express API as a Netlify Function
+├── supabase/schema.sql       Database tables for Supabase
 ├── .env.example
 └── package.json
 ```

@@ -59,18 +59,35 @@ export function CsvUpload({ exams, examId: fixedExamId, onDone }) {
     if (file) setCsv(await file.text());
   }
 
+  // Upload in batches of 50 rows so each request stays well within the
+  // serverless time limit (passwords are hashed server-side).
   async function upload() {
     setBusy(true);
     setResult(null);
+    const lines = csv.split(/\r?\n/);
+    const header = lines[0];
+    const body = lines.slice(1).filter((l) => l.trim());
+    const total = { created: 0, updated: 0, assigned: 0, errors: [] };
     try {
-      const d = await api('/admin/participants/bulk', { method: 'POST', body: { csv, examId: fixedExamId || examId } });
-      setResult(d);
-      if (!d.errors.length) setCsv('');
-      onDone && onDone();
+      for (let i = 0; i < body.length; i += 50) {
+        const chunk = [header, ...body.slice(i, i + 50)].join('\n');
+        const d = await api('/admin/participants/bulk', {
+          method: 'POST',
+          body: { csv: chunk, examId: fixedExamId || examId, lineOffset: i },
+        });
+        total.created += d.created;
+        total.updated += d.updated;
+        total.assigned += d.assigned;
+        total.errors.push(...d.errors);
+        setResult({ ...total, progress: Math.min(body.length, i + 50), totalRows: body.length });
+      }
+      setResult({ ...total });
+      if (!total.errors.length) setCsv('');
     } catch (err) {
-      setResult({ errors: [err.message], created: 0, updated: 0, assigned: 0 });
+      setResult({ ...total, errors: [...total.errors, err.message] });
     } finally {
       setBusy(false);
+      onDone && onDone();
     }
   }
 
@@ -97,6 +114,7 @@ export function CsvUpload({ exams, examId: fixedExamId, onDone }) {
       </div>
       {result && (
         <div className={`alert ${result.errors.length ? 'alert-warn' : 'alert-ok'}`}>
+          {result.totalRows && busy ? `Uploading… ${result.progress}/${result.totalRows} rows. ` : ''}
           Created {result.created}, updated {result.updated}, newly assigned {result.assigned}.
           {result.errors.length > 0 && (
             <ul>{result.errors.map((er) => <li key={er}>{er}</li>)}</ul>

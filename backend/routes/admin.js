@@ -1,7 +1,7 @@
-const fs = require('fs');
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const config = require('../config');
+const store = require('../services/store');
 const excel = require('../services/excelService');
 const scoring = require('../services/scoringService');
 const { attemptInfo } = require('./exam');
@@ -27,8 +27,8 @@ function clean(v, max = 5000) {
   return String(v ?? '').trim().slice(0, max);
 }
 
-function loadExam(id) {
-  const exam = excel.getExam(id);
+async function loadExam(id) {
+  const exam = await store.getExam(id);
   if (!exam) throw httpError(404, 'Exam not found');
   return exam;
 }
@@ -93,9 +93,9 @@ function normalizeSections(sections) {
   });
 }
 
-function examStats(exam) {
-  const assigned = excel.getAssignments().filter((a) => a.examId === exam.id);
-  const attempts = excel.getAttempts(exam.id);
+async function examStats(exam, assignments) {
+  const assigned = (assignments || (await store.getAssignments())).filter((a) => a.examId === exam.id);
+  const attempts = await store.getAttempts(exam.id);
   return {
     participants: assigned.length,
     submitted: attempts.filter((a) => a.status === 'submitted').length,
@@ -103,8 +103,8 @@ function examStats(exam) {
   };
 }
 
-function bankForEditor(exam) {
-  const bank = excel.getQuestionBank(exam);
+async function bankForEditor(exam) {
+  const bank = await store.getQuestionBank(exam);
   return bank.sections.map((s) => ({
     name: s.name,
     nameHi: s.nameHi,
@@ -131,72 +131,78 @@ async function hashPassword(pw) {
 
 // ---------------------------------------------------------------- exams
 
-router.get('/exams', (req, res) => {
-  const exams = excel
-    .getExams()
-    .map((e) => {
-      const bank = excel.getQuestionBank(e);
-      return { ...e, questionCount: bank.questions.length, sectionCount: bank.sections.length, ...examStats(e) };
-    })
-    .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+router.get('/exams', async (req, res) => {
+  const [all, assignments] = await Promise.all([store.getExams(), store.getAssignments()]);
+  const exams = (
+    await Promise.all(
+      all.map(async (e) => {
+        const [bank, stats] = await Promise.all([store.getQuestionBank(e), examStats(e, assignments)]);
+        return { ...e, questionCount: bank.questions.length, sectionCount: bank.sections.length, ...stats };
+      }),
+    )
+  ).sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
   res.json({ exams });
 });
 
-router.post('/exams', (req, res) => {
+router.post('/exams', async (req, res) => {
   const meta = normalizeMeta(req.body || {});
   const sections = normalizeSections((req.body || {}).sections);
-  excel.ensureDirs();
   const exam = {
     id: `EX${Date.now().toString(36).toUpperCase()}`,
     ...meta,
-    fileName: excel.examFileName(meta.title, meta.examDate),
+    fileName: '',
     createdAt: new Date().toISOString(),
   };
-  excel.saveExam(exam);
-  excel.saveQuestionBank(exam, sections);
+  await store.saveExam(exam);
+  await store.saveQuestionBank(exam, sections);
   res.status(201).json({ exam });
 });
 
-router.get('/exams/:id', (req, res) => {
-  const exam = loadExam(req.params.id);
-  res.json({ exam: { ...exam, ...examStats(exam) }, sections: bankForEditor(exam) });
+router.get('/exams/:id', async (req, res) => {
+  const exam = await loadExam(req.params.id);
+  const [stats, sections] = await Promise.all([examStats(exam), bankForEditor(exam)]);
+  res.json({ exam: { ...exam, ...stats }, sections });
 });
 
-router.put('/exams/:id', (req, res) => {
-  const existing = loadExam(req.params.id);
+router.put('/exams/:id', async (req, res) => {
+  const existing = await loadExam(req.params.id);
   const meta = normalizeMeta(req.body || {}, existing);
   const exam = { ...existing, ...meta };
-  if (req.body.sections) excel.saveQuestionBank(exam, normalizeSections(req.body.sections));
-  excel.saveExam(exam);
-  // Thresholds may have changed — refresh remarks already written to Excel.
-  const summary = excel.getSummaryRows(exam);
-  if (summary.length) excel.rewriteSummary(exam, scoring.refreshRemarks(summary, exam.thresholds), scoring.buildAnalyticsSheet);
+  const sections = req.body.sections ? normalizeSections(req.body.sections) : null;
+  await store.saveExam(exam);
+  if (sections) await store.saveQuestionBank(exam, sections);
+  // Thresholds may have changed — refresh remarks already stored.
+  const summary = await store.getSummaryRows(exam);
+  if (summary.length) await store.rewriteSummary(exam, scoring.refreshRemarks(summary, exam.thresholds), scoring.buildAnalyticsSheet);
   res.json({ exam });
 });
 
-router.patch('/exams/:id/status', (req, res) => {
-  const exam = loadExam(req.params.id);
+router.patch('/exams/:id/status', async (req, res) => {
+  const exam = await loadExam(req.params.id);
   if (!STATUSES.includes(req.body.status)) throw httpError(400, 'Invalid status');
   exam.status = req.body.status;
-  excel.saveExam(exam);
+  await store.saveExam(exam);
   res.json({ exam });
 });
 
-router.delete('/exams/:id', (req, res) => {
-  const exam = loadExam(req.params.id);
-  excel.deleteExamFiles(exam);
-  excel.deleteExamRecord(exam.id);
+router.delete('/exams/:id', async (req, res) => {
+  const exam = await loadExam(req.params.id);
+  await store.deleteExam(exam);
   res.json({ ok: true });
 });
 
 // ---------------------------------------------------------------- participants per exam
 
-router.get('/exams/:id/participants', (req, res) => {
-  const exam = loadExam(req.params.id);
-  const users = new Map(excel.getUsers().map((u) => [u.username, u]));
-  const attempts = new Map(excel.getAttempts(exam.id).map((a) => [a.username, a]));
-  const participants = excel
-    .getAssignments()
+router.get('/exams/:id/participants', async (req, res) => {
+  const exam = await loadExam(req.params.id);
+  const [userList, attemptList, assignments] = await Promise.all([
+    store.getUsers(),
+    store.getAttempts(exam.id),
+    store.getAssignments(),
+  ]);
+  const users = new Map(userList.map((u) => [u.username, u]));
+  const attempts = new Map(attemptList.map((a) => [a.username, a]));
+  const participants = assignments
     .filter((a) => a.examId === exam.id)
     .map((a) => {
       const attempt = attempts.get(a.username);
@@ -220,41 +226,51 @@ router.get('/exams/:id/participants', (req, res) => {
   res.json({ participants });
 });
 
-router.delete('/exams/:id/participants/:username', (req, res) => {
-  const exam = loadExam(req.params.id);
-  excel.unassign(exam.id, req.params.username);
+router.delete('/exams/:id/participants/:username', async (req, res) => {
+  const exam = await loadExam(req.params.id);
+  await store.unassign(exam.id, req.params.username);
   res.json({ ok: true });
 });
 
 /** Admin can wipe a participant's attempt so they can retake the exam. */
-router.delete('/exams/:id/attempts/:username', (req, res) => {
-  const exam = loadExam(req.params.id);
+router.delete('/exams/:id/attempts/:username', async (req, res) => {
+  const exam = await loadExam(req.params.id);
   const username = excel.normalizeUsername(req.params.username);
-  excel.deleteAttempt(exam.id, username);
-  excel.removeSubmission(exam, username, scoring.buildAnalyticsSheet);
+  await store.deleteAttempt(exam.id, username);
+  await store.removeSubmission(exam, username, scoring.buildAnalyticsSheet);
   res.json({ ok: true });
 });
 
-router.get('/exams/:id/results/:username', (req, res) => {
-  const exam = loadExam(req.params.id);
+router.get('/exams/:id/results/:username', async (req, res) => {
+  const exam = await loadExam(req.params.id);
   const username = excel.normalizeUsername(req.params.username);
-  const attempt = excel.getAttempt(exam.id, username);
+  const attempt = await store.getAttempt(exam.id, username);
   if (!attempt || !attempt.result) throw httpError(404, 'No submission');
-  const responses = excel.getResponseRows(exam).filter((r) => String(r.Username) === username);
+  const responses = await store.getResponseRows(exam, username);
   res.json({ result: resultCard(exam, attempt), attempt: attemptInfo(exam, attempt), responses });
 });
 
-router.get('/exams/:id/analytics', (req, res) => {
-  const exam = loadExam(req.params.id);
-  res.json({ analytics: scoring.computeAnalytics(excel.getSummaryRows(exam), excel.getResponseRows(exam)) });
+router.get('/exams/:id/analytics', async (req, res) => {
+  const exam = await loadExam(req.params.id);
+  const [summary, responses] = await Promise.all([store.getSummaryRows(exam), store.getResponseRows(exam)]);
+  res.json({ analytics: scoring.computeAnalytics(summary, responses) });
 });
 
-router.get('/exams/:id/download', (req, res) => {
-  const exam = loadExam(req.params.id);
-  // Regenerate remarks + Analytics so the download is always current.
-  const summary = excel.getSummaryRows(exam);
-  excel.rewriteSummary(exam, scoring.refreshRemarks(summary, exam.thresholds), scoring.buildAnalyticsSheet);
-  const buf = excel.examWorkbookBuffer(exam);
+router.get('/exams/:id/download', async (req, res) => {
+  const exam = await loadExam(req.params.id);
+  // Build the workbook fresh (current remarks + Analytics) from the active store.
+  const [rawSummary, responses, bank] = await Promise.all([
+    store.getSummaryRows(exam),
+    store.getResponseRows(exam),
+    store.getQuestionBank(exam),
+  ]);
+  const summary = scoring.refreshRemarks(rawSummary, exam.thresholds);
+  const buf = excel.buildResultsWorkbook({
+    summary,
+    responses,
+    bank,
+    analyticsAoa: scoring.buildAnalyticsSheet(summary, responses),
+  });
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.setHeader(
     'Content-Disposition',
@@ -265,9 +281,9 @@ router.get('/exams/:id/download', (req, res) => {
 
 // ---------------------------------------------------------------- users
 
-router.get('/users', (req, res) => {
-  const assignments = excel.getAssignments();
-  const users = excel.getUsers().map((u) => ({
+router.get('/users', async (req, res) => {
+  const [assignments, userList] = await Promise.all([store.getAssignments(), store.getUsers()]);
+  const users = userList.map((u) => ({
     username: u.username,
     name: u.name,
     createdAt: u.createdAt,
@@ -285,31 +301,34 @@ router.post('/participants', async (req, res) => {
   if (!USERNAME_RE.test(username) || username === config.adminUsername) {
     throw httpError(400, 'Username must be 3–40 characters: letters, digits, dot, dash or underscore');
   }
-  const existing = excel.getUser(username);
+  const existing = await store.getUser(username);
   if (!existing && (!name || !password)) throw httpError(400, 'Name and password are required for a new participant');
   if (password && password.length < 4) throw httpError(400, 'Password must be at least 4 characters');
-  if (examId) loadExam(examId);
-  excel.upsertUser({ username, name, passwordHash: password ? await hashPassword(password) : '' });
-  if (examId) excel.assign(examId, username);
+  if (examId) await loadExam(examId);
+  await store.upsertUsers([{ username, name, passwordHash: password ? await hashPassword(password) : '' }]);
+  if (examId) await store.assign(examId, username);
   res.status(existing ? 200 : 201).json({ ok: true, created: !existing });
 });
 
 router.post('/participants/bulk', async (req, res) => {
   const examId = clean(req.body.examId, 40);
-  if (examId) loadExam(examId);
+  if (examId) await loadExam(examId);
+  // The frontend uploads big CSVs in batches; lineOffset keeps error line numbers right.
+  const lineOffset = Math.max(0, Math.floor(num(req.body.lineOffset, 0)));
   let records;
   try {
     records = excel.parseCsv(String(req.body.csv || ''));
   } catch {
     throw httpError(400, 'Could not read the CSV');
   }
-  const known = new Set(excel.getUsers().map((u) => u.username));
+  if (records.length > 50) throw httpError(400, 'Upload at most 50 rows per request');
+  const known = new Set((await store.getUsers()).map((u) => u.username));
   const errors = [];
   const toSave = [];
   const seen = new Set();
   for (const [i, raw] of records.entries()) {
     const rec = Object.fromEntries(Object.entries(raw).map(([k, v]) => [k.trim().toLowerCase(), String(v).trim()]));
-    const line = i + 2;
+    const line = i + 2 + lineOffset;
     const username = excel.normalizeUsername(rec.username);
     if (!USERNAME_RE.test(username) || username === config.adminUsername) {
       errors.push(`Line ${line}: invalid username "${rec.username || ''}"`);
@@ -334,8 +353,8 @@ router.post('/participants/bulk', async (req, res) => {
   for (const u of toSave) {
     hashed.push({ username: u.username, name: u.name, passwordHash: u.password ? await hashPassword(u.password) : '' });
   }
-  if (hashed.length) excel.upsertUsers(hashed);
-  const assigned = examId && hashed.length ? excel.assign(examId, hashed.map((u) => u.username)) : 0;
+  if (hashed.length) await store.upsertUsers(hashed);
+  const assigned = examId && hashed.length ? await store.assign(examId, hashed.map((u) => u.username)) : 0;
   res.json({
     created: hashed.filter((u) => !known.has(u.username)).length,
     updated: hashed.filter((u) => known.has(u.username)).length,
@@ -344,16 +363,16 @@ router.post('/participants/bulk', async (req, res) => {
   });
 });
 
-router.post('/users/:username/assign', (req, res) => {
-  const user = excel.getUser(req.params.username);
+router.post('/users/:username/assign', async (req, res) => {
+  const user = await store.getUser(req.params.username);
   if (!user) throw httpError(404, 'User not found');
-  const exam = loadExam(clean(req.body.examId, 40));
-  excel.assign(exam.id, user.username);
+  const exam = await loadExam(clean(req.body.examId, 40));
+  await store.assign(exam.id, user.username);
   res.json({ ok: true });
 });
 
-router.delete('/users/:username', (req, res) => {
-  excel.deleteUser(req.params.username);
+router.delete('/users/:username', async (req, res) => {
+  await store.deleteUser(req.params.username);
   res.json({ ok: true });
 });
 
@@ -361,26 +380,19 @@ router.delete('/users/:username', (req, res) => {
 
 const LOGO_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
 
-router.post('/logo', (req, res) => {
+router.post('/logo', async (req, res) => {
   const m = /^data:([^;]+);base64,(.+)$/.exec(String(req.body.dataUrl || ''));
   if (!m || !LOGO_TYPES.includes(m[1])) throw httpError(400, 'Logo must be a PNG, JPEG, GIF or WebP image');
   const buf = Buffer.from(m[2], 'base64');
   if (buf.length > 1024 * 1024) throw httpError(400, 'Logo must be under 1 MB');
-  excel.ensureDirs();
-  fs.writeFileSync(config.logoFile, buf);
-  excel.setSetting('logoType', m[1]);
-  excel.setSetting('logoVersion', String(Date.now()));
+  await store.setLogo(m[1], buf);
+  await store.setSetting('logoVersion', String(Date.now()));
   res.json({ ok: true });
 });
 
-router.delete('/logo', (req, res) => {
-  try {
-    fs.unlinkSync(config.logoFile);
-  } catch {
-    /* no logo */
-  }
-  excel.setSetting('logoType', '');
-  excel.setSetting('logoVersion', '');
+router.delete('/logo', async (req, res) => {
+  await store.deleteLogo();
+  await store.setSetting('logoVersion', '');
   res.json({ ok: true });
 });
 

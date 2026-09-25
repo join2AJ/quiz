@@ -1,10 +1,26 @@
-# Netlify hosts only the React frontend. The Express API (which stores the
-# Excel files) must run on a Node host with a persistent disk (Railway/Render)
-# — set BACKEND_URL in Netlify to that server's URL, e.g. https://psq.up.railway.app
+# Netlify: frontend (static) + the Express API as a Netlify Function.
+# Data is stored in Supabase — see README "Deploy on Netlify + Supabase".
+# Required environment variables (Site configuration → Environment variables):
+#   ADMIN_PASSWORD, SESSION_SECRET, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
 [build]
-  base = "frontend"
-  command = "npm run build && node netlify-redirects.mjs"
-  publish = "dist"
+  command = "npm run build"
+  publish = "frontend/dist"
 
 [build.environment]
   NODE_VERSION = "22"
+
+[functions]
+  directory = "netlify/functions"
+  node_bundler = "esbuild"
+
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/api/:splat"
+  status = 200
+  force = true
+
+# Single-page app: every other URL loads index.html (React Router handles it).
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

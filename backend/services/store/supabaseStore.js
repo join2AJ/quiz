@@ -1,0 +1,425 @@
+/**
+ * Supabase (Postgres) store — used on serverless hosts such as Netlify, where
+ * the filesystem is not persistent. Same interface as fileStore. Excel files
+ * are generated on demand when the admin downloads results.
+ *
+ * Uses the service_role key (server-side only). Tables have RLS enabled with
+ * no policies, so the public anon key cannot read anything.
+ */
+const { createClient } = require('@supabase/supabase-js');
+const config = require('../../config');
+const { OPTIONS, normalizeUsername, examFileBase, numberBank } = require('../excelService');
+
+const PAGE = 1000; // PostgREST returns at most 1000 rows per request by default
+
+let client;
+function db() {
+  if (!client) {
+    client = createClient(config.supabaseUrl, config.supabaseKey, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+  }
+  return client;
+}
+
+function check({ data, error }) {
+  if (error) {
+    const err = new Error(`Database error: ${error.message}`);
+    err.cause = error;
+    throw err;
+  }
+  return data;
+}
+
+/** Fetch every row of a query, paging past the 1000-row limit. */
+async function selectAll(build) {
+  const out = [];
+  for (let from = 0; ; from += PAGE) {
+    const rows = check(await build().range(from, from + PAGE - 1));
+    out.push(...rows);
+    if (rows.length < PAGE) return out;
+  }
+}
+
+async function insertChunks(table, rows) {
+  for (let i = 0; i < rows.length; i += 500) check(await db().from(table).insert(rows.slice(i, i + 500)));
+}
+
+// ---------------------------------------------------------------- users
+
+const userFromRow = (r) => ({ username: r.username, name: r.name, passwordHash: r.password_hash, createdAt: r.created_at });
+
+async function getUsers() {
+  return (await selectAll(() => db().from('psq_users').select('*').order('username'))).map(userFromRow);
+}
+
+async function getUser(username) {
+  const r = check(await db().from('psq_users').select('*').eq('username', normalizeUsername(username)).maybeSingle());
+  return r ? userFromRow(r) : null;
+}
+
+async function upsertUsers(list) {
+  if (!list.length) return;
+  const names = list.map((u) => normalizeUsername(u.username));
+  const existing = new Map();
+  for (let i = 0; i < names.length; i += 200) {
+    const rows = check(await db().from('psq_users').select('*').in('username', names.slice(i, i + 200)));
+    for (const r of rows) existing.set(r.username, r);
+  }
+  const rows = list.map(({ username, name, passwordHash }) => {
+    const u = normalizeUsername(username);
+    const old = existing.get(u);
+    return {
+      username: u,
+      name: name || (old && old.name) || '',
+      password_hash: passwordHash || (old && old.password_hash),
+    };
+  });
+  check(await db().from('psq_users').upsert(rows, { onConflict: 'username' }));
+}
+
+async function deleteUser(username) {
+  check(await db().from('psq_users').delete().eq('username', normalizeUsername(username)));
+}
+
+// ---------------------------------------------------------------- exams
+
+function examFromRow(r) {
+  return {
+    id: r.id,
+    title: r.title,
+    team: r.team,
+    site: r.site,
+    examDate: r.exam_date,
+    instructions: r.instructions,
+    instructionsHi: r.instructions_hi,
+    unlockDays: r.unlock_days,
+    estimatedMinutes: r.estimated_minutes,
+    status: r.status,
+    fileName: r.file_name,
+    thresholds: { ...config.defaultThresholds, ...(r.thresholds || {}) },
+    createdAt: r.created_at,
+  };
+}
+
+function examToRow(e) {
+  return {
+    id: e.id,
+    title: e.title,
+    team: e.team,
+    site: e.site,
+    exam_date: e.examDate,
+    instructions: e.instructions,
+    instructions_hi: e.instructionsHi,
+    unlock_days: e.unlockDays,
+    estimated_minutes: e.estimatedMinutes,
+    status: e.status,
+    file_name: e.fileName,
+    thresholds: e.thresholds || {},
+    created_at: e.createdAt,
+  };
+}
+
+async function getExams() {
+  return (await selectAll(() => db().from('psq_exams').select('*').order('created_at'))).map(examFromRow);
+}
+
+async function getExam(id) {
+  const r = check(await db().from('psq_exams').select('*').eq('id', id).maybeSingle());
+  return r ? examFromRow(r) : null;
+}
+
+async function saveExam(exam) {
+  if (!exam.fileName) {
+    // Keep names unique among exams, like files on disk would be.
+    const base = examFileBase(exam.title, exam.examDate);
+    const taken = new Set((await getExams()).map((e) => e.fileName));
+    let name = `${base}.xlsx`;
+    let n = 2;
+    while (taken.has(name)) name = `${base}_${n++}.xlsx`;
+    exam.fileName = name;
+  }
+  check(await db().from('psq_exams').upsert(examToRow(exam), { onConflict: 'id' }));
+  return exam;
+}
+
+async function deleteExam(exam) {
+  // Child tables cascade.
+  check(await db().from('psq_exams').delete().eq('id', exam.id));
+}
+
+// ---------------------------------------------------------------- assignments
+
+async function getAssignments() {
+  const rows = await selectAll(() => db().from('psq_assignments').select('*').order('exam_id').order('username'));
+  return rows.map((r) => ({ examId: r.exam_id, username: r.username, assignedAt: r.assigned_at }));
+}
+
+async function isAssigned(examId, username) {
+  const r = check(
+    await db().from('psq_assignments').select('exam_id').eq('exam_id', examId).eq('username', normalizeUsername(username)).maybeSingle(),
+  );
+  return !!r;
+}
+
+async function assign(examId, usernames) {
+  const list = [...new Set((Array.isArray(usernames) ? usernames : [usernames]).map(normalizeUsername))];
+  if (!list.length) return 0;
+  const already = new Set();
+  for (let i = 0; i < list.length; i += 200) {
+    const rows = check(await db().from('psq_assignments').select('username').eq('exam_id', examId).in('username', list.slice(i, i + 200)));
+    for (const r of rows) already.add(r.username);
+  }
+  const fresh = list.filter((u) => !already.has(u));
+  if (fresh.length) {
+    check(
+      await db()
+        .from('psq_assignments')
+        .upsert(fresh.map((u) => ({ exam_id: examId, username: u })), { onConflict: 'exam_id,username', ignoreDuplicates: true }),
+    );
+  }
+  return fresh.length;
+}
+
+async function unassign(examId, username) {
+  check(await db().from('psq_assignments').delete().eq('exam_id', examId).eq('username', normalizeUsername(username)));
+}
+
+// ---------------------------------------------------------------- settings + logo
+
+async function getSetting(key) {
+  const r = check(await db().from('psq_settings').select('value').eq('key', key).maybeSingle());
+  return r ? r.value : '';
+}
+
+async function setSetting(key, value) {
+  if (value === null || value === undefined || value === '') {
+    check(await db().from('psq_settings').delete().eq('key', key));
+  } else {
+    check(await db().from('psq_settings').upsert({ key, value: String(value) }, { onConflict: 'key' }));
+  }
+}
+
+async function getLogo() {
+  const v = await getSetting('logo');
+  const m = /^([^;]+);base64,(.+)$/.exec(v);
+  return m ? { type: m[1], buffer: Buffer.from(m[2], 'base64') } : null;
+}
+
+async function setLogo(type, buffer) {
+  await setSetting('logo', `${type};base64,${buffer.toString('base64')}`);
+}
+
+async function deleteLogo() {
+  await setSetting('logo', '');
+}
+
+// ---------------------------------------------------------------- question bank
+
+/** Full bank INCLUDING correct answers — server-side only. */
+async function getQuestionBank(exam) {
+  const [sections, questions, key] = await Promise.all([
+    selectAll(() => db().from('psq_sections').select('*').eq('exam_id', exam.id).order('no')),
+    selectAll(() => db().from('psq_questions').select('*').eq('exam_id', exam.id).order('no')),
+    selectAll(() => db().from('psq_answer_key').select('*').eq('exam_id', exam.id).order('no')),
+  ]);
+  const keyByNo = new Map(key.map((k) => [k.no, k]));
+  return {
+    sections: sections.map((s) => ({
+      no: s.no,
+      name: s.name,
+      nameHi: s.name_hi,
+      description: s.description,
+      descriptionHi: s.description_hi,
+    })),
+    questions: questions.map((q) => {
+      const k = keyByNo.get(q.no) || {};
+      return {
+        no: q.no,
+        qid: q.qid,
+        sectionNo: q.section_no,
+        type: (q.type || '').toUpperCase(),
+        category: q.category,
+        textEn: q.text_en,
+        textHi: q.text_hi,
+        options: OPTIONS.map((o, i) => {
+          const opt = (q.options || [])[i] || {};
+          return { key: o, en: opt.en || '', hi: opt.hi || '' };
+        }),
+        correct: (k.correct || '').toUpperCase(),
+        explanation: k.explanation || '',
+      };
+    }),
+  };
+}
+
+async function saveQuestionBank(exam, sections) {
+  const bank = numberBank(sections);
+  for (const table of ['psq_answer_key', 'psq_questions', 'psq_sections']) {
+    check(await db().from(table).delete().eq('exam_id', exam.id));
+  }
+  await insertChunks(
+    'psq_sections',
+    bank.sections.map((s) => ({
+      exam_id: exam.id,
+      no: s.no,
+      name: s.name,
+      name_hi: s.nameHi,
+      description: s.description,
+      description_hi: s.descriptionHi,
+    })),
+  );
+  await insertChunks(
+    'psq_questions',
+    bank.questions.map((q) => ({
+      exam_id: exam.id,
+      no: q.no,
+      qid: q.qid,
+      section_no: q.sectionNo,
+      type: q.type,
+      category: q.category,
+      text_en: q.textEn,
+      text_hi: q.textHi,
+      options: q.options.map((o) => ({ en: o.en, hi: o.hi })),
+    })),
+  );
+  await insertChunks(
+    'psq_answer_key',
+    bank.questions.map((q) => ({ exam_id: exam.id, no: q.no, correct: q.correct, category: q.category, explanation: q.explanation })),
+  );
+}
+
+// ---------------------------------------------------------------- results
+
+async function getSummaryRows(exam) {
+  const rows = await selectAll(() => db().from('psq_summary').select('row').eq('exam_id', exam.id).order('submitted_at').order('username'));
+  return rows.map((r) => r.row);
+}
+
+async function getResponseRows(exam, username) {
+  const rows = await selectAll(() => {
+    let q = db().from('psq_responses').select('row').eq('exam_id', exam.id);
+    if (username) q = q.eq('username', username);
+    return q.order('username').order('question_no');
+  });
+  return rows.map((r) => r.row);
+}
+
+async function saveSubmission(exam, summaryRow, responseRows) {
+  const username = summaryRow.Username;
+  check(await db().from('psq_responses').delete().eq('exam_id', exam.id).eq('username', username));
+  await insertChunks(
+    'psq_responses',
+    responseRows.map((r) => ({ exam_id: exam.id, username, question_no: r['Question No'], row: r })),
+  );
+  check(
+    await db()
+      .from('psq_summary')
+      .upsert({ exam_id: exam.id, username, row: summaryRow, submitted_at: new Date().toISOString() }, { onConflict: 'exam_id,username' }),
+  );
+}
+
+async function removeSubmission(exam, username) {
+  check(await db().from('psq_responses').delete().eq('exam_id', exam.id).eq('username', username));
+  check(await db().from('psq_summary').delete().eq('exam_id', exam.id).eq('username', username));
+}
+
+/** Update summary rows in place (e.g. refreshed remarks). */
+async function rewriteSummary(exam, summary) {
+  if (!summary.length) return;
+  const rows = summary.map((r) => ({ exam_id: exam.id, username: r.Username, row: r }));
+  for (let i = 0; i < rows.length; i += 500) {
+    check(await db().from('psq_summary').upsert(rows.slice(i, i + 500), { onConflict: 'exam_id,username', defaultToNull: false }));
+  }
+}
+
+// ---------------------------------------------------------------- attempts
+
+const attemptFromRow = (r) => ({
+  username: r.username,
+  status: r.status,
+  startedAt: r.started_at,
+  submittedAt: r.submitted_at || '',
+  state: r.state || {},
+  result: r.result || null,
+});
+
+async function getAttempts(examId) {
+  return (await selectAll(() => db().from('psq_attempts').select('*').eq('exam_id', examId).order('username'))).map(attemptFromRow);
+}
+
+async function getAttempt(examId, username) {
+  const r = check(
+    await db().from('psq_attempts').select('*').eq('exam_id', examId).eq('username', normalizeUsername(username)).maybeSingle(),
+  );
+  return r ? attemptFromRow(r) : null;
+}
+
+async function saveAttempt(examId, attempt) {
+  check(
+    await db()
+      .from('psq_attempts')
+      .upsert(
+        {
+          exam_id: examId,
+          username: attempt.username,
+          status: attempt.status,
+          started_at: attempt.startedAt,
+          submitted_at: attempt.submittedAt || null,
+          state: attempt.state || {},
+          result: attempt.result || null,
+        },
+        { onConflict: 'exam_id,username' },
+      ),
+  );
+}
+
+async function deleteAttempt(examId, username) {
+  check(await db().from('psq_attempts').delete().eq('exam_id', examId).eq('username', normalizeUsername(username)));
+}
+
+async function init() {
+  // Fails fast with a readable message if the schema has not been created.
+  const { error } = await db().from('psq_settings').select('key').limit(1);
+  if (error) {
+    const err = new Error(
+      `Supabase is configured but the tables are missing or unreachable (${error.message}). Run supabase/schema.sql in the Supabase SQL Editor.`,
+    );
+    err.status = 503;
+    throw err;
+  }
+  return { store: 'supabase' };
+}
+
+module.exports = {
+  kind: 'supabase',
+  init,
+  getUsers,
+  getUser,
+  upsertUsers,
+  deleteUser,
+  getExams,
+  getExam,
+  saveExam,
+  deleteExam,
+  getAssignments,
+  isAssigned,
+  assign,
+  unassign,
+  getSetting,
+  setSetting,
+  getLogo,
+  setLogo,
+  deleteLogo,
+  getQuestionBank,
+  saveQuestionBank,
+  getSummaryRows,
+  getResponseRows,
+  saveSubmission,
+  removeSubmission,
+  rewriteSummary,
+  getAttempts,
+  getAttempt,
+  saveAttempt,
+  deleteAttempt,
+};

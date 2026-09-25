@@ -1,7 +1,8 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const config = require('../config');
-const excel = require('../services/excelService');
+const store = require('../services/store');
+const { normalizeUsername } = require('../services/excelService');
 
 const router = express.Router();
 
@@ -32,11 +33,12 @@ function recordFailure(ip) {
 }
 
 router.post('/login', async (req, res) => {
-  const ip = req.ip;
+  // On Netlify, x-nf-client-connection-ip is set by Netlify's edge to the visitor's IP.
+  const ip = (config.isServerless && req.headers['x-nf-client-connection-ip']) || req.ip;
   if (tooManyFailures(ip)) {
     return res.status(429).json({ error: 'Too many attempts. Please try again later.' });
   }
-  const username = excel.normalizeUsername(req.body && req.body.username);
+  const username = normalizeUsername(req.body && req.body.username);
   const password = String((req.body && req.body.password) || '');
   const invalid = () => {
     recordFailure(ip);
@@ -53,7 +55,7 @@ router.post('/login', async (req, res) => {
     return res.json({ user: req.session.user });
   }
 
-  const user = excel.getUser(username);
+  const user = await store.getUser(username);
   const ok = await bcrypt.compare(password, user ? user.passwordHash : dummyHash);
   if (!user || !ok) return invalid();
   req.session.user = { username: user.username, name: user.name, role: 'participant' };
