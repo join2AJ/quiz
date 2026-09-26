@@ -1,4 +1,6 @@
 import { useMemo, useState } from 'react';
+import { api } from '../../api.js';
+import Modal from '../Modal.jsx';
 
 const LETTERS = ['A', 'B', 'C', 'D'];
 
@@ -12,11 +14,91 @@ function optionKind(q, k) {
   return ['wrong', ''];
 }
 
+/** Edit one question on screen: wording (EN + HI), options, correct answer, explanation, topic, tags. */
+function QuestionEditModal({ examId, q, onClose, onSaved }) {
+  const [f, setF] = useState(() => ({
+    textEn: q.textEn || '',
+    textHi: q.textHi || '',
+    scenarioEn: q.scenarioEn || '',
+    scenarioHi: q.scenarioHi || '',
+    category: q.category || '',
+    explanation: q.explanation || '',
+    explanationHi: q.explanationHi || '',
+    options: LETTERS.map((_, i) => ({ en: (q.options[i] || {}).en || '', hi: (q.options[i] || {}).hi || '' })),
+    correct: q.correct,
+    tags: (q.tags || []).join(', '),
+  }));
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const set = (k) => (e) => setF((x) => ({ ...x, [k]: e.target.value }));
+  const setOpt = (i, lang) => (e) =>
+    setF((x) => ({ ...x, options: x.options.map((o, j) => (j === i ? { ...o, [lang]: e.target.value } : o)) }));
+
+  async function save() {
+    if (f.correct !== q.correct && !window.confirm(`Change the correct answer from ${q.correct} to ${f.correct}? Scores of people who already submitted are not recalculated.`)) return;
+    setBusy(true);
+    setError('');
+    try {
+      const r = await api(`/admin/exams/${examId}/questions/${q.no}`, {
+        method: 'PATCH',
+        body: { ...f, tags: f.tags.split(',').map((t) => t.trim()).filter(Boolean) },
+      });
+      onSaved(r);
+    } catch (e) {
+      setError(e.message);
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal title={`Edit Q${q.no}${q.qid ? ` (${q.qid})` : ''}`} onClose={() => !busy && onClose()}>
+      <div className="stack modal-scroll qe-form">
+        <div className="qe-grid">
+          <label className="field"><span>Question (English)</span><textarea rows={4} value={f.textEn} onChange={set('textEn')} /></label>
+          <label className="field"><span>Question (Hindi)</span><textarea rows={4} value={f.textHi} onChange={set('textHi')} lang="hi" /></label>
+          {(q.scenarioEn || q.scenarioHi) && (
+            <>
+              <label className="field"><span>Situation (English)</span><textarea rows={3} value={f.scenarioEn} onChange={set('scenarioEn')} /></label>
+              <label className="field"><span>Situation (Hindi)</span><textarea rows={3} value={f.scenarioHi} onChange={set('scenarioHi')} lang="hi" /></label>
+            </>
+          )}
+        </div>
+        <div className="qe-options">
+          {LETTERS.map((k, i) => (
+            <div key={k} className={`qe-option ${f.correct === k ? 'qe-correct' : ''}`}>
+              <label className="qe-radio" title="Correct answer">
+                <input type="radio" name="qe-correct" checked={f.correct === k} onChange={() => setF((x) => ({ ...x, correct: k }))} />
+                <span className="option-key">{k}</span>
+                {f.correct === k && <span className="small kind-correct">Correct</span>}
+              </label>
+              <textarea rows={3} aria-label={`Option ${k} English`} placeholder="English" value={f.options[i].en} onChange={setOpt(i, 'en')} />
+              <textarea rows={3} aria-label={`Option ${k} Hindi`} placeholder="Hindi" lang="hi" value={f.options[i].hi} onChange={setOpt(i, 'hi')} />
+            </div>
+          ))}
+        </div>
+        <div className="qe-grid">
+          <label className="field"><span>Explanation (English) — shown to staff with their result</span><textarea rows={4} value={f.explanation} onChange={set('explanation')} /></label>
+          <label className="field"><span>Explanation (Hindi)</span><textarea rows={4} value={f.explanationHi} onChange={set('explanationHi')} lang="hi" /></label>
+          <label className="field"><span>Topic</span><input value={f.category} onChange={set('category')} /></label>
+          <label className="field"><span>Tags (comma separated)</span><input value={f.tags} onChange={set('tags')} /></label>
+        </div>
+        {error && <div className="alert alert-error">{error}</div>}
+      </div>
+      <div className="modal-actions">
+        <button type="button" className="btn btn-secondary" onClick={onClose} disabled={busy}>Cancel</button>
+        <button type="button" className="btn btn-primary" onClick={save} disabled={busy}>{busy ? 'Saving…' : 'Save question'}</button>
+      </div>
+    </Modal>
+  );
+}
+
 /**
  * Read-only view of every question with the answer key and behaviour
  * interpretation (admin only — this data is never sent to participants).
  */
-export default function QuestionBank({ sections, dimensions = {}, extraFilter = null }) {
+export default function QuestionBank({ sections, dimensions = {}, extraFilter = null, examId = null, onChanged = null }) {
+  const [editing, setEditing] = useState(null);
+  const [saved, setSaved] = useState('');
   const [lang, setLang] = useState('both');
   const [section, setSection] = useState('all');
   const [search, setSearch] = useState('');
@@ -69,7 +151,8 @@ export default function QuestionBank({ sections, dimensions = {}, extraFilter = 
         </label>
         <button type="button" className="btn btn-secondary btn-sm" onClick={() => window.print()}>Print</button>
       </div>
-      <p className="muted small">Admin only. Answers, interpretations and explanations are never shown to participants.</p>
+      <p className="muted small">Admin only. Answers, interpretations and explanations are never shown to participants during the exam.{examId ? ' Use ✎ Edit on a question to change it.' : ''}</p>
+      {saved && <div className="alert alert-ok" role="status">{saved}</div>}
 
       {numbered.every((s) => !s.questions.some(matches)) && <p className="muted">No questions match.</p>}
       {numbered
@@ -92,6 +175,9 @@ export default function QuestionBank({ sections, dimensions = {}, extraFilter = 
                       {q.difficulty && <span className="badge">{q.difficulty}</span>}
                       {showKey && q.dimension && <span className="badge badge-in_progress">{dim.label || q.dimension}</span>}
                       {showKey && <span className="badge">weight {q.weight ?? 1}</span>}
+                      {examId && (
+                        <button type="button" className="btn btn-ghost btn-sm qb-edit" onClick={() => setEditing(q)}>✎ Edit</button>
+                      )}
                     </div>
                     {(q.tags || []).length > 0 && (
                       <div className="qb-tags">{q.tags.map((t) => <span key={t} className="tag-chip small">#{t}</span>)}</div>
@@ -131,6 +217,22 @@ export default function QuestionBank({ sections, dimensions = {}, extraFilter = 
             </section>
           );
         })}
+      {editing && (
+        <QuestionEditModal
+          examId={examId}
+          q={editing}
+          onClose={() => setEditing(null)}
+          onSaved={(r) => {
+            setSaved(
+              r.changed.length
+                ? `Q${editing.no}${editing.qid ? ` (${editing.qid})` : ''} saved.${r.submitted && r.changed.some((c) => c.startsWith('correct answer')) ? ` ${r.submitted} person(s) already submitted — their scores were not recalculated.` : ''}`
+                : 'No changes.',
+            );
+            setEditing(null);
+            if (onChanged) onChanged();
+          }}
+        />
+      )}
     </div>
   );
 }

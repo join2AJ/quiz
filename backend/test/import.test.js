@@ -248,6 +248,23 @@ test('import database, score behaviour with partial credit, audit chain', async 
   assert.equal(ed3.options[1].hi, 'नया विकल्प B');
   assert.equal(ed3.correct, 'B');
 
+  // Edit one question on screen: wording, options, tags, correct answer.
+  const edited = await admin('PATCH', `/api/admin/exams/${examId}/questions/2`, {
+    textEn: 'Knowledge Q2 — edited on screen?',
+    options: [{ en: 'Opt A', hi: 'विकल्प A' }],
+    tags: ['#Fee Rules', 'pos'],
+    correct: 'C',
+  });
+  assert.equal(edited.status, 200);
+  assert.equal(edited.data.submitted, 1);
+  const eq = (await admin('GET', `/api/admin/exams/${examId}`)).data.sections[0].questions[1];
+  assert.equal(eq.textEn, 'Knowledge Q2 — edited on screen?');
+  assert.equal(eq.options[0].hi, 'विकल्प A');
+  assert.deepEqual(eq.tags, ['fee_rules', 'pos']);
+  assert.equal(eq.correct, 'C');
+  assert.equal((await admin('PATCH', `/api/admin/exams/${examId}/questions/99`, { textEn: 'x' })).status, 404);
+  assert.equal((await admin('PATCH', `/api/admin/exams/${examId}/questions/2`, { textEn: '' })).status, 400);
+
   // Find & replace: preview, then apply across questions and exam fields.
   const pv = await admin('POST', `/api/admin/exams/${examId}/replace`, { find: 'Knowledge Q', replace: 'Rule Q' });
   assert.equal(pv.data.applied, false);

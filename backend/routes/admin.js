@@ -1046,6 +1046,75 @@ router.post('/exams/:id/update-text', async (req, res) => {
   res.json({ applied: !!req.body.apply && changes.length > 0, changes, notInExam });
 });
 
+// ---------------------------------------------------------------- edit one question on screen
+
+/**
+ * Edit one question from the Questions tab: wording (EN/HI), options,
+ * explanation, topic, tags and the correct answer. Scores already stored for
+ * people who submitted are not recalculated.
+ */
+router.patch('/exams/:id/questions/:no', async (req, res) => {
+  const exam = await loadExam(req.params.id);
+  const no = Number(req.params.no);
+  const sections = await bankForEditor(exam);
+  const all = sections.flatMap((sec) => sec.questions);
+  const q = all[no - 1];
+  if (!q) throw httpError(404, 'Question not found');
+  const body = req.body || {};
+  const changed = [];
+  for (const f of TEXT_FIELDS) {
+    if (typeof body[f] !== 'string') continue;
+    const v = clean(body[f], 5000);
+    if (f === 'textEn' && !v) throw httpError(400, 'The English question cannot be empty');
+    if (v !== (q[f] || '')) {
+      changed.push(f);
+      q[f] = v;
+    }
+  }
+  if (Array.isArray(body.options)) {
+    body.options.slice(0, 4).forEach((o, i) => {
+      for (const lang of ['en', 'hi']) {
+        if (!o || typeof o[lang] !== 'string' || !q.options[i]) continue;
+        const v = clean(o[lang], 2000);
+        if (lang === 'en' && !v) throw httpError(400, `Option ${excel.OPTIONS[i]} (English) cannot be empty`);
+        if (v !== (q.options[i][lang] || '')) {
+          changed.push(`option ${excel.OPTIONS[i]} (${lang.toUpperCase()})`);
+          q.options[i][lang] = v;
+        }
+      }
+    });
+  }
+  if (Array.isArray(body.tags)) {
+    const tags = [...new Set(body.tags.map((t) => clean(t, 60).toLowerCase().replace(/^#/, '').replace(/\s+/g, '_')).filter(Boolean))].slice(0, 20);
+    if (JSON.stringify(tags) !== JSON.stringify(q.tags || [])) {
+      changed.push('tags');
+      q.tags = tags;
+    }
+  }
+  if (body.correct !== undefined) {
+    const letter = clean(body.correct, 1).toUpperCase();
+    if (!excel.OPTIONS.includes(letter)) throw httpError(400, 'The correct answer must be A, B, C or D');
+    if (letter !== q.correct) {
+      changed.push(`correct answer ${q.correct} → ${letter}`);
+      q.correct = letter;
+      // The new best answer is no longer partial, concern or neutral.
+      for (const k of ['fullCredit', 'partial', 'concern', 'neutral']) q[k] = (q[k] || []).filter((l) => l !== letter);
+    }
+  }
+  if (changed.length) {
+    await store.saveQuestionBank(exam, normalizeSections(sections));
+    await audit.log(req, 'ADMIN_EDIT_TEXT', {
+      admin_username: 'admin',
+      exam_id: exam.id,
+      mode: 'edit_question',
+      question_id: q.qid || `Q${no}`,
+      fields_changed: changed,
+    });
+  }
+  const submitted = (await store.getSummaryRows(exam)).length;
+  res.json({ ok: true, changed, submitted });
+});
+
 // ---------------------------------------------------------------- audit trail (admin only)
 
 router.get('/audit', async (req, res) => {

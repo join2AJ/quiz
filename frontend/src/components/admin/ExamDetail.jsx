@@ -1008,7 +1008,7 @@ export default function ExamDetail() {
         ))}
       </div>
       {tab === 'live' && <LiveTab examId={id} onChanged={reload} />}
-      {tab === 'questions' && <QuestionBank sections={sections} dimensions={(exam.config || {}).dimensions || {}} />}
+      {tab === 'questions' && <QuestionBank sections={sections} dimensions={(exam.config || {}).dimensions || {}} examId={id} onChanged={reload} />}
       {tab === 'tags' && <TagsTab sections={sections} dimensions={(exam.config || {}).dimensions || {}} />}
       {tab === 'participants' && <ParticipantsTab exam={exam} participants={participants} reload={reload} onView={setViewing} />}
       {tab === 'results' && <ResultsTab examId={exam.id} participants={participants} onView={setViewing} />}
