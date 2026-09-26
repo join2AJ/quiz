@@ -25,6 +25,10 @@ function writeBackup(examId, username, value) {
   }
 }
 import TopBar from '../components/TopBar.jsx';
+
+// Wait for queued autosaves, but never longer than `ms` (slow networks or a
+// long queue must not block moving on; answers are also sent with the request).
+const settle = (promise, ms = 6000) => Promise.race([promise, new Promise((r) => setTimeout(r, ms))]);
 import LanguageToggle from '../components/LanguageToggle.jsx';
 import QuestionPalette from '../components/QuestionPalette.jsx';
 import Modal from '../components/Modal.jsx';
@@ -167,8 +171,10 @@ export default function Exam() {
   const qTimeRef = useRef({}); // no -> accumulated ms this session
   const shownAtRef = useRef(Date.now());
   const currentRef = useRef(1);
+  const answersRef = useRef({});
   const langRef = useRef(lang);
   currentRef.current = current;
+  answersRef.current = answers;
 
   const recoverRef = useRef([]); // events to re-send after loading a device backup
 
@@ -403,7 +409,13 @@ export default function Exam() {
     if (refreshingRef.current) return null;
     refreshingRef.current = true;
     try {
-      await queueRef.current;
+      await settle(queueRef.current);
+      const closing = data && data.clock && data.clock.timed && data.clock.phase === 'section' ? data.clock.current : null;
+      if (closing) {
+        const partAnswers = {};
+        for (const x of data.questions) if (x.sectionNo === closing && answersRef.current[x.no]) partAnswers[x.no] = answersRef.current[x.no];
+        await api(`/exam/${id}/section/next`, { method: 'POST', body: { section: closing, answers: partAnswers } }).catch(() => {});
+      }
       const view = await api(`/exam/${id}`);
       load(view);
       return view;
@@ -412,14 +424,16 @@ export default function Exam() {
     } finally {
       refreshingRef.current = false;
     }
-  }, [id, load]);
+  }, [id, load, data]);
 
   async function finishPart() {
     if (!clock) return;
     setBusy(true);
     try {
-      await queueRef.current;
-      load(await api(`/exam/${id}/section/next`, { method: 'POST', body: { section: clock.current } }));
+      await settle(queueRef.current);
+      const partAnswers = {};
+      for (const x of data.questions) if (x.sectionNo === clock.current && answers[x.no]) partAnswers[x.no] = answers[x.no];
+      load(await api(`/exam/${id}/section/next`, { method: 'POST', body: { section: clock.current, answers: partAnswers } }));
       window.scrollTo({ top: 0 });
     } catch {
       setError(t('somethingWrong'));
@@ -450,7 +464,7 @@ export default function Exam() {
     setBusy(true);
     setError('');
     try {
-      await queueRef.current; // let pending saves finish first
+      await settle(queueRef.current); // let pending saves finish first (bounded)
       // Send every answer on screen too: the server recovers any that never saved.
       await api(`/exam/${id}/submit`, { method: 'POST', body: { answers, flags, roles, rolesOther } });
       writeBackup(id, username, null);

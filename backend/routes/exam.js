@@ -358,6 +358,27 @@ router.post('/:id/section/next', async (req, res) => {
   const plan = examClock.plan(exam, bank);
   const clk = examClock.clock(plan, attempt);
   const no = Number(req.body && req.body.section);
+  // The browser sends this part's answers too, so answers whose autosave is
+  // still queued are not lost when the part closes (or has just timed out).
+  const sent = req.body && typeof req.body.answers === 'object' && req.body.answers ? req.body.answers : null;
+  const closedAt = (clk.closedAt || {})[no];
+  const canApply = clk.timed && ((clk.phase === 'section' && clk.current === no) || (closedAt && Date.now() - closedAt < 2 * 60 * 1000));
+  const recovered = [];
+  if (sent && canApply) {
+    const now = Date.now();
+    for (const q of bank.questions.filter((x) => x.sectionNo === no)) {
+      const opt = String(sent[q.no] || '').toUpperCase();
+      if (!opt || !OPTIONS.includes(opt)) continue;
+      const had = ((attempt.state.q || {})[q.no] || {}).answer || '';
+      if (had !== opt) {
+        // Timestamp at the part's end when it has already closed.
+        timer.recordAnswer(attempt.state, q.no, opt, closedAt ? Math.min(now, closedAt) : now);
+        recovered.push({ question_id: q.qid, server_had: had || null, browser_had: opt });
+      }
+    }
+    if (recovered.length) await store.saveAttempt(exam.id, attempt);
+    for (const r of recovered) await audit.log(req, 'ANSWER_SELECT', { username, exam_id: exam.id, ...r, recovered_at_part_end: true });
+  }
   if (clk.timed && clk.phase === 'section' && clk.current === no) {
     attempt.state.sec = attempt.state.sec || { ends: {} };
     attempt.state.sec.ends = attempt.state.sec.ends || {};
