@@ -1023,6 +1023,12 @@ router.post('/exams/:id/update-text', async (req, res) => {
           q.revealMap = { ...(q.revealMap || {}), [l]: v };
         }
       }
+      // Tags only group questions for analytics; they never change scores.
+      const tags = (src.tags || []).map((t) => clean(t, 60)).filter(Boolean).slice(0, 20);
+      if (tags.length && JSON.stringify(tags) !== JSON.stringify(q.tags || [])) {
+        changed.push('tags');
+        q.tags = tags;
+      }
       if (changed.length) changes.push({ qid: q.qid, fields: changed });
     }
   }
