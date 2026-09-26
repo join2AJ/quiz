@@ -3,6 +3,7 @@ const store = require('../services/store');
 const scoring = require('../services/scoringService');
 const audit = require('../services/auditService');
 const { publicExam, isUnlocked, attemptInfo } = require('./exam');
+const report = require('../services/participantReport');
 
 const router = express.Router();
 
@@ -44,7 +45,13 @@ router.get('/:id', async (req, res) => {
     result_was_available: unlocked,
   });
   if (!unlocked) return res.json({ ...base, locked: true });
-  return res.json({ ...base, locked: false, result: resultCard(exam, attempt) });
+  const [bank, rows] = await Promise.all([store.getQuestionBank(exam), store.getResponseRows(exam, username)]);
+  return res.json({
+    ...base,
+    locked: false,
+    result: resultCard(exam, attempt),
+    report: report.build({ exam, bank, result: attempt.result, rows }),
+  });
 });
 
 module.exports = router;

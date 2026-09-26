@@ -135,8 +135,37 @@ The file's `admin` row is ignored. The admin password is always the `ADMIN_PASSW
 - The review screen lists answered, unanswered and flagged questions. Submitting asks for confirmation
   and warns about unanswered questions without blocking submission.
 - After submitting, the thank-you page shows the unlock date in both languages and a live countdown.
-- After the unlock date the participant sees a result card: total score, per-section %, time taken,
-  a gauge, and bilingual remarks. It never shows a leaderboard or anyone else's data.
+- After the unlock date (or as soon as the admin presses **Declare results now**) the participant sees
+  their result: total and part-wise scores, area scores, what the result means, where they are strong,
+  how to improve (a tip for each weak area and the topics to revise), every question with their answer,
+  the best answer and the explanation, and how the score is calculated. **Print my summary** prints
+  the summary only (not the answers). It never shows a leaderboard or anyone else's data.
+  Turn off "Show every question with the correct answer" in the exam editor to hide the answers.
+
+### Exam day: one device, waiting room, time limits
+
+- **One device per person.** Logging in on a second device asks "Already logged in on another
+  device — log in here?". Yes ends the session on the first device (it shows "You were logged out
+  because your account was used on another device"). Admins are not limited.
+- **Waiting room** (on by default; switch off in the exam editor). Staff who log in see "Please wait —
+  the examiner will start the exam". On the exam's **Live** tab the examiner presses
+  **Start exam for everyone**; the Begin button turns on for everyone within a few seconds.
+- **Live tab**: who is online, inactive, logged out, timed out or never logged in; their device; login
+  and last-seen times; and where they are (waiting, Part 2 · 14 answered · 12:03 left, submitted).
+  It refreshes every 10 seconds. **Submit now** submits an unfinished exam with the answers saved so far.
+- **Time limits** (on by default). Each part gets the normal time for its questions — the "suggested
+  seconds" per question type, or the reading time if longer — plus 5 extra minutes; the whole exam gets
+  the sum plus 5 more minutes for the final review. Both extras can be changed in the exam editor.
+  Parts are taken in order. When a part's time is over it closes and the next part starts; a closed
+  part cannot be reopened. "Finish this part" moves on early. When the whole exam's time is over, the
+  answers are submitted automatically. All times are kept by the server.
+- **Jobs they can do.** Before submitting, staff tick the jobs they can do on their own (TAEP, BAEP,
+  printing, paper pass, Kronos enrollment, card encoding and issuing, AVSEC training, TOT, BGC, AO and
+  more). The list can be edited per exam. Answers appear in the admin summary, the Results tab, the
+  Excel file (`Can Do (Roles)`) and as an analytics filter.
+- **Copy protection.** On staff pages right-click, copying, pasting, selecting text and the print /
+  save shortcuts are blocked, and the exam page cannot be printed. (No website can stop a photo of
+  the screen.)
 
 ## 5. Download Excel results
 
@@ -268,6 +297,14 @@ language switches). The exam instructions tell participants that leaving the tab
 - **Update question wording from a file**: Import → "Update question wording in: …" changes only the text of matching
   questions (by ID). Answer keys, scores and results stay as they are, so it is safe after people have submitted.
 - The Excel download adds **Leadership Summary** and **Question Reports** sheets, and each answer row includes the best answer.
+
+## Analytics filters and drill-down
+
+The Analytics tab can be filtered by the job people say they can do, designation, shift, verdict and
+name; every number, chart and summary then covers only those people. Click a quality under
+**Team strengths and weaknesses** (for example Excellence) to see who is strong (70%+), who to watch
+(50–69%) and who needs work (below 50%); click a verdict or a job to see who falls under it, and click a
+name to open their summary.
 
 ## Capacity and reliability
 

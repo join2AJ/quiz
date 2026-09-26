@@ -5,6 +5,7 @@ const config = require('../config');
 const store = require('../services/store');
 const { normalizeUsername } = require('../services/excelService');
 const audit = require('../services/auditService');
+const presence = require('../services/presenceService');
 
 const router = express.Router();
 
@@ -85,7 +86,22 @@ router.post('/login', async (req, res) => {
     user = { username: found.username, name: found.name, nameHi: found.nameHi || '', role: 'participant' };
   }
 
+  // One device at a time: if this account is active on another device, ask
+  // first; logging in here then ends the other session.
+  if (user.role === 'participant') {
+    const conflict = await presence.conflictFor(user.username, req.session && req.session.sid);
+    if (conflict && !(req.body && req.body.force === true)) {
+      failures.delete(ip);
+      await audit.log(req, 'LOGIN_CONFLICT', { username: user.username, other_device: conflict.device, new_device: presence.describeDevice(deviceInfo(req)) });
+      return res.status(409).json({ code: 'ALREADY_LOGGED_IN', error: 'Already logged in on another device', device: conflict.device, since: conflict.since });
+    }
+    if (conflict) {
+      await audit.log(req, 'SESSION_REPLACED', { username: user.username, old_device: conflict.device, new_device: presence.describeDevice(deviceInfo(req)) });
+    }
+  }
+
   startSession(req, user);
+  if (user.role === 'participant') await presence.login(user.username, req.session.sid, deviceInfo(req));
   failures.delete(ip);
   await attempt(true, null);
   await audit.log(req, 'LOGIN_SUCCESS', {
@@ -99,12 +115,26 @@ router.post('/login', async (req, res) => {
 
 router.post('/logout', async (req, res) => {
   if (req.session && req.session.user) {
+    if (req.session.user.role === 'participant') await presence.end(req.session.user.username, req.session.sid, 'logged_out');
     await audit.log(req, 'LOGOUT', {
       username: req.session.user.username,
       session_duration_seconds: req.session.loginAt ? Math.round((Date.now() - req.session.loginAt) / 1000) : null,
     });
   }
   req.session = null;
+  res.json({ ok: true });
+});
+
+// Heartbeat from logged-in pages: keeps "online" accurate and tells a browser
+// whose session was replaced by a login on another device.
+router.post('/ping', async (req, res) => {
+  const s = req.session;
+  if (!s || !s.user) return res.status(401).json({ error: 'Not authenticated' });
+  if (s.user.role === 'participant') {
+    const stage = ['home', 'waiting', 'exam', 'review', 'submitted', 'result'].includes(req.body && req.body.stage) ? req.body.stage : undefined;
+    const examId = typeof (req.body && req.body.examId) === 'string' ? req.body.examId.slice(0, 40) : undefined;
+    await presence.touch(s.user.username, s.sid, { stage, examId });
+  }
   res.json({ ok: true });
 });
 

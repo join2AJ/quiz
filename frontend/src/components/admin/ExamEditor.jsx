@@ -343,6 +343,10 @@ export default function ExamEditor() {
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
   const setTh = (k) => (e) => setForm((f) => ({ ...f, thresholds: { ...f.thresholds, [k]: e.target.value } }));
   const setCfg = (patch) => setForm((f) => ({ ...f, config: { ...f.config, ...patch } }));
+  const [defaultRoles, setDefaultRoles] = useState([]);
+  useEffect(() => {
+    api('/admin/roles/default').then((d) => setDefaultRoles(d.roles)).catch(() => {});
+  }, []);
   const rulesList = form.config.remarkRules || [];
   const setRule = (i, k, v) => setCfg({ remarkRules: rulesList.map((r, j) => (j === i ? { ...r, [k]: v } : r)) });
   const moveRule = (i, d) => {
@@ -463,6 +467,46 @@ export default function ExamEditor() {
           Each question is worth its weight in points. Partial-credit options earn the percentage above. Suggested seconds are shown to
           participants as a guide (the timer turns orange when exceeded); they do not end the question.
         </p>
+      </fieldset>
+
+      <fieldset className="card">
+        <legend>Exam day</legend>
+        <label className="row-actions" style={{ marginBottom: '0.75rem' }}>
+          <input type="checkbox" checked={form.config.waitingRoom !== false} onChange={(e) => setCfg({ waitingRoom: e.target.checked })} />
+          <span>
+            Waiting room. <span className="muted small">Staff who log in wait until you press “Start exam for everyone” on the Live tab.</span>
+          </span>
+        </label>
+        <label className="row-actions" style={{ marginBottom: '0.75rem' }}>
+          <input type="checkbox" checked={form.config.timeLimits !== false} onChange={(e) => setCfg({ timeLimits: e.target.checked })} />
+          <span>
+            Time limit for each part. <span className="muted small">Each part gets the normal time for its questions (the suggested seconds above,
+            or reading time if longer) plus the extra minutes below. Parts are taken in order; a closed part cannot be reopened.</span>
+          </span>
+        </label>
+        <div className="form-grid form-grid-6">
+          <label className="field"><span>Extra minutes per part</span>
+            <input type="number" min="0" max="60" value={form.config.sectionExtraMinutes ?? 5} onChange={(e) => setCfg({ sectionExtraMinutes: e.target.value })} />
+          </label>
+          <label className="field"><span>Extra minutes for the whole exam</span>
+            <input type="number" min="0" max="60" value={form.config.examExtraMinutes ?? 5} onChange={(e) => setCfg({ examExtraMinutes: e.target.value })} />
+          </label>
+        </div>
+        <label className="row-actions" style={{ marginBottom: '0.75rem' }}>
+          <input type="checkbox" checked={form.config.showAnswersInResult !== false} onChange={(e) => setCfg({ showAnswersInResult: e.target.checked })} />
+          <span>
+            Show every question with the correct answer in the staff member's result. <span className="muted small">Visible only once results are
+            released (unlock date or “Declare results now”).</span>
+          </span>
+        </label>
+        <label className="field">
+          <span>Jobs staff can tick at the end (“Which of these can you do on your own?”) — one per line, <code>English | Hindi</code></span>
+          <textarea
+            rows={8}
+            value={form.config.rolesText ?? (form.config.roles && form.config.roles.length ? form.config.roles : defaultRoles).map((r) => `${r.en}${r.hi ? ` | ${r.hi}` : ''}`).join('\n')}
+            onChange={(e) => setCfg({ rolesText: e.target.value })}
+          />
+        </label>
       </fieldset>
 
       <fieldset className="card">

@@ -77,7 +77,17 @@ test('import database, score behaviour with partial credit, audit chain', async 
   const p = client();
   const login = await p('POST', '/api/auth/login', { username: 'test.one', password: 'Pass@One1' });
   assert.equal(login.data.user.nameHi, 'परीक्षण एक');
+  assert.equal((await p('POST', `/api/exam/${examId}/start`, {})).data.code, 'WAITING');
+  await admin('POST', `/api/admin/exams/${examId}/go-live`, { live: true });
   const started = await p('POST', `/api/exam/${examId}/start`, {});
+  // Time limits: each part has its own limit; the exam limit adds extra minutes.
+  const timing = started.data.timing;
+  assert.equal(timing.timed, true);
+  assert.equal(timing.sections.length, 2);
+  assert.equal(timing.examLimitSeconds, timing.sections[0].limitSeconds + timing.sections[1].limitSeconds + 5 * 60);
+  assert.ok(timing.sections[0].limitSeconds >= 2 * 30 + 5 * 60);
+  assert.equal(started.data.clock.phase, 'section');
+  assert.equal(started.data.clock.current, 1);
   const raw = JSON.stringify(started.data);
   for (const secret of ['correct', 'revealMap', 'fullCredit', 'partial', 'concern', 'explanation', 'CONCERN', 'dimension', 'is_correct']) {
     assert.ok(!raw.includes(secret), `participant payload leaks "${secret}"`);
@@ -96,6 +106,14 @@ test('import database, score behaviour with partial credit, audit chain', async 
   await ev({ type: 'lang', q: 2, from: 'en', to: 'hi' });
   await ev({ type: 'tab_hidden', q: 2 });
   await ev({ type: 'tab_visible', q: 2 });
+  // Part 2 is closed until part 1 ends.
+  const early = await ev({ type: 'answer', q: 3, option: 'A' });
+  assert.equal(early.status, 409);
+  assert.equal(early.data.code, 'SECTION_CLOSED');
+  const next = await p('POST', `/api/exam/${examId}/section/next`, { section: 1 });
+  assert.equal(next.data.clock.current, 2);
+  assert.equal((await ev({ type: 'answer', q: 1, option: 'C' })).status, 200); // still within the grace period
+  await ev({ type: 'answer', q: 1, option: 'B' });
   await ev({ type: 'view', q: 3, via: 'button' });
   await ev({ type: 'answer', q: 3, option: 'A' }); // B01 preferred-not-best -> 50% of w2 = 1
   await ev({ type: 'view', q: 4, via: 'button' });
@@ -104,7 +122,7 @@ test('import database, score behaviour with partial credit, audit chain', async 
   assert.equal((await p('POST', `/api/exam/${examId}/report`, { q: 2, reason: 'translation', comment: 'Hindi option B is wrong', lang: 'hi' })).status, 200);
   await ev({ type: 'review' });
   await ev({ type: 'submit_attempt' });
-  await p('POST', `/api/exam/${examId}/submit`, {});
+  await p('POST', `/api/exam/${examId}/submit`, { roles: ['taep', 'kronos', 'not_a_role'], rolesOther: 'Night shift lead' });
 
   const detail = await admin('GET', `/api/admin/exams/${examId}/results/test.one`);
   const r = detail.data.result;
@@ -117,7 +135,9 @@ test('import database, score behaviour with partial credit, audit chain', async 
   assert.equal(r.concernCount, 1);
   assert.equal(r.integrity.tabSwitches, 1);
   assert.equal(r.integrity.languageToggles, 1);
-  assert.equal(r.integrity.answerChanges, 1);
+  assert.equal(r.integrity.answerChanges, 3);
+  assert.deepEqual(r.roles, ['TAEP processing', 'Kronos enrollment']);
+  assert.equal(r.rolesOther, 'Night shift lead');
   assert.deepEqual(r.remarks.map((x) => x.en), ['Rule two: knowledge ahead.']); // first matching rule only
   const dims = Object.fromEntries(r.dimensions.map((d) => [d.key, d.pct]));
   assert.deepEqual(dims, { regulatory_knowledge: 100, process_knowledge: 100, anger_threshold: 50, peer_relations: 0 });
@@ -132,6 +152,15 @@ test('import database, score behaviour with partial credit, audit chain', async 
   assert.equal(mine.data.result.integrity, undefined);
   assert.equal(mine.data.result.concernCount, undefined);
   assert.equal(mine.data.result.dimensions.length, 4);
+  // Their report: meaning, how to improve, every answer with the correct one.
+  const rep = mine.data.report;
+  assert.equal(rep.band.en, 'Fair');
+  assert.ok(rep.improve.length >= 1 && rep.improve[0].tip.en.length > 10);
+  assert.equal(rep.answers.length, 4);
+  assert.equal(rep.answers[3].outcome, 'notBest');
+  assert.equal(rep.answers[3].best, 'D');
+  assert.ok(!JSON.stringify(rep).includes('CONCERN'), 'participant report must not show concern labels');
+  assert.equal(rep.howCalculated.maxPoints, 8);
 
   // Analytics: behaviour distribution with interpretation, concerns list.
   const an = (await admin('GET', `/api/admin/exams/${examId}/analytics`)).data.analytics;
@@ -175,8 +204,36 @@ test('import database, score behaviour with partial credit, audit chain', async 
   assert.ok(detail.data.leadership.answers.some((x) => x.q.startsWith('Did they take the exam seriously')));
   assert.equal(detail.data.leadership.engagement.level, 'rushed'); // the test answers instantly
   assert.equal(detail.data.responses.find((r) => r.QID === 'B02')['Best Answer'], 'D');
-  const anTeam = (await admin('GET', `/api/admin/exams/${examId}/analytics`)).data.team;
+  const anAll = (await admin('GET', `/api/admin/exams/${examId}/analytics`)).data;
+  const anTeam = anAll.team;
   assert.ok(anTeam.answers.some((x) => x.q === 'Who needs attention?'));
+  assert.deepEqual(anAll.filterOptions.roles, ['Kronos enrollment', 'TAEP processing']);
+  assert.equal(anTeam.people[0].dims.anger_threshold, 50);
+  // Filters: by role they can do, by name.
+  assert.equal((await admin('GET', `/api/admin/exams/${examId}/analytics?role=${encodeURIComponent('TAEP processing')}`)).data.analytics.participants, 1);
+  assert.equal((await admin('GET', `/api/admin/exams/${examId}/analytics?role=BGC`)).data.analytics.participants, 0);
+  assert.equal((await admin('GET', `/api/admin/exams/${examId}/analytics?q=nobody`)).data.analytics.participants, 0);
+
+  // Live view: who is logged in and where they are.
+  const live = (await admin('GET', `/api/admin/exams/${examId}/live`)).data;
+  const one = live.people.find((x) => x.username === 'test.one');
+  assert.equal(one.login, 'online');
+  assert.equal(one.exam, 'submitted');
+  assert.equal(live.people.find((x) => x.username === 'test.two').login, 'never');
+
+  // One device at a time: a second login asks first, then replaces the first.
+  const p2 = client();
+  const clash = await p2('POST', '/api/auth/login', { username: 'test.one', password: 'Pass@One1' });
+  assert.equal(clash.status, 409);
+  assert.equal(clash.data.code, 'ALREADY_LOGGED_IN');
+  assert.equal((await p2('POST', '/api/auth/login', { username: 'test.one', password: 'Pass@One1', force: true })).status, 200);
+  const kicked = await p('GET', `/api/exam/${examId}`);
+  assert.equal(kicked.status, 401);
+  assert.equal(kicked.data.code, 'SESSION_REPLACED');
+  assert.equal((await p2('GET', `/api/exam/${examId}`)).status, 200);
+  await p2('POST', '/api/auth/logout', {});
+  const afterLogout = (await admin('GET', `/api/admin/exams/${examId}/live`)).data.people.find((x) => x.username === 'test.one');
+  assert.equal(afterLogout.login, 'logged_out');
 
   // Update wording from a file: text changes, answer key does not.
   const reworded = JSON.parse(JSON.stringify(database));

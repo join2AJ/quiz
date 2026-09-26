@@ -31,6 +31,24 @@ function tone(pctValue) {
 
 const ENGAGEMENT_TONE = { careful: 'good', mixed: 'warn', quick: 'warn', rushed: 'bad' };
 
+const HEADLINES = ['Strong performer', 'On track', 'Needs development', 'Needs attention', 'Result unreliable — rushed'];
+
+/** Work a person said they can do, from their summary row. */
+function rolesOf(summaryRow) {
+  return String((summaryRow && summaryRow['Can Do (Roles)']) || '')
+    .split(';')
+    .map((x) => x.trim())
+    .filter((x) => x && !x.startsWith('Other:') && x !== 'None of these');
+}
+
+function parseDims(summaryRow) {
+  try {
+    return JSON.parse(summaryRow['Dimension Scores'] || '{}');
+  } catch {
+    return {};
+  }
+}
+
 function headlineFor(level, concernCount, pctValue) {
   if (level === 'rushed') return 'Result unreliable — rushed';
   if (concernCount >= 3) return 'Needs attention';
@@ -224,6 +242,10 @@ function team({ analytics, summary, responses, bank, exam, assigned, reports }) 
     return {
       username: s.Username,
       name: s.Name,
+      designation: s.Designation || '',
+      shift: s.Shift || '',
+      roles: rolesOf(s),
+      dims: parseDims(s),
       pct,
       eng,
       posture,
@@ -333,9 +355,22 @@ function team({ analytics, summary, responses, bank, exam, assigned, reports }) 
   };
   const dimensions = dims.map((d) => ({ key: d.key, label: d.label, group: d.group, average: d.average }));
   const roster = people
-    .map((p) => ({ username: p.username, name: p.name, pct: p.pct, level: p.eng.level, avgSeconds: p.eng.avgSeconds, concerns: p.concerns, tabs: p.tabs, headline: p.headline }))
+    .map((p) => ({
+      username: p.username,
+      name: p.name,
+      designation: p.designation,
+      shift: p.shift,
+      roles: p.roles,
+      dims: p.dims,
+      pct: p.pct,
+      level: p.eng.level,
+      avgSeconds: p.eng.avgSeconds,
+      concerns: p.concerns,
+      tabs: p.tabs,
+      headline: p.headline,
+    }))
     .sort((a, b) => b.pct - a.pct);
   return { paragraph, answers, stats, dimensions, people: roster };
 }
 
-module.exports = { individual, team, engagement, tone, headlineFor, withBestAnswers, TOO_FAST_SECONDS, QUICK_AVG_SECONDS };
+module.exports = { individual, team, engagement, tone, headlineFor, rolesOf, HEADLINES, withBestAnswers, TOO_FAST_SECONDS, QUICK_AVG_SECONDS };

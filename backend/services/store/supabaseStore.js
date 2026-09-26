@@ -289,6 +289,34 @@ async function unassign(examId, username) {
   check(await db().from('psq_assignments').delete().eq('exam_id', examId).eq('username', normalizeUsername(username)));
 }
 
+// ---------------------------------------------------------------- presence
+// Kept in psq_settings under "presence:<username>" so no new table is needed.
+
+async function getPresence(username) {
+  const v = await getSetting(`presence:${normalizeUsername(username)}`);
+  if (!v) return null;
+  try {
+    return JSON.parse(v);
+  } catch {
+    return null;
+  }
+}
+async function setPresence(username, value) {
+  await setSetting(`presence:${normalizeUsername(username)}`, JSON.stringify(value));
+}
+async function listPresence() {
+  const rows = await selectAll(() => db().from('psq_settings').select('key,value').like('key', 'presence:%').order('key'));
+  return rows
+    .map((r) => {
+      try {
+        return { username: r.key.slice('presence:'.length), ...JSON.parse(r.value) };
+      } catch {
+        return null;
+      }
+    })
+    .filter(Boolean);
+}
+
 // ---------------------------------------------------------------- settings + logo
 
 async function getSetting(key) {
@@ -570,6 +598,9 @@ module.exports = {
   assign,
   unassign,
   getSetting,
+  getPresence,
+  setPresence,
+  listPresence,
   setSetting,
   getLogo,
   setLogo,

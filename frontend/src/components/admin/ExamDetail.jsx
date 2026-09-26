@@ -9,6 +9,7 @@ import { AddParticipantForm, CsvUpload } from './ParticipantForms.jsx';
 import QuestionBank from './QuestionBank.jsx';
 import TagsTab from './TagsTab.jsx';
 import FindReplace from './FindReplace.jsx';
+import LiveTab from './LiveTab.jsx';
 import {
   AnswerBody, Chip, ENGAGEMENT, HEADLINE_TONE, InsightGrid, InsightItem, KIND_CHIP, Kpi, KpiRow, Legend, PctChip, toneOf,
 } from './Insights.jsx';
@@ -32,7 +33,7 @@ const KIND_CLASS = {
 const isWide = (x) => Boolean(x.list || (x.people && x.people.length));
 
 /** Plain-language summary for leaders: headline, key numbers, one paragraph and colour-coded answers. */
-function LeaderCard({ title, subtitle, headline, paragraph, answers, kpis, strengths, gaps }) {
+function LeaderCard({ title, subtitle, headline, paragraph, answers, kpis, strengths, gaps, canDo }) {
   const lead = answers.filter((x) => x.key !== 'next');
   const next = answers.find((x) => x.key === 'next');
   return (
@@ -60,6 +61,15 @@ function LeaderCard({ title, subtitle, headline, paragraph, answers, kpis, stren
               <div className="chip-row">{gaps.map((x) => <Chip key={x} tone="warn">{x}</Chip>)}</div>
             </div>
           )}
+        </div>
+      )}
+      {canDo && (
+        <div>
+          <div className="sg-label" style={{ color: 'var(--primary)' }}>Says they can do on their own</div>
+          <div className="chip-row">
+            {canDo.roles.length ? canDo.roles.map((x) => <Chip key={x} tone="info">{x}</Chip>) : <span className="muted small">None of the listed jobs</span>}
+            {canDo.other && <Chip tone="muted">Other: {canDo.other}</Chip>}
+          </div>
         </div>
       )}
       <InsightGrid>
@@ -156,6 +166,7 @@ function ParticipantsTab({ exam, participants, reload, onView }) {
           <table className="table">
             <thead>
               <tr>
+                <th>S.No</th>
                 <th>Name</th>
                 <th>Username</th>
                 <th className="hide-sm">Designation / Shift</th>
@@ -166,8 +177,9 @@ function ParticipantsTab({ exam, participants, reload, onView }) {
               </tr>
             </thead>
             <tbody>
-              {participants.map((p) => (
+              {participants.map((p, i) => (
                 <tr key={p.username}>
+                  <td className="muted">{i + 1}</td>
                   <td>{p.name}</td>
                   <td className="mono">{p.username}</td>
                   <td className="small hide-sm">{[p.designation, p.shift].filter(Boolean).join(' · ')}</td>
@@ -214,7 +226,7 @@ function ResultsTab({ examId, participants, onView }) {
         <table className="table table-roomy">
           <thead>
             <tr>
-              <th>#</th>
+              <th>S.No</th>
               <th>Name</th>
               <th>Verdict</th>
               <th className="num">Score</th>
@@ -223,6 +235,7 @@ function ResultsTab({ examId, participants, onView }) {
               {sectionNos.map((n) => <th className="num hide-sm" key={n} title={sectionName(n)}>Part {n}<div className="th-sub">{sectionName(n)}</div></th>)}
               <th>Seriousness</th>
               <th className="num">Concerns</th>
+              <th>Can do</th>
               <th className="num">Time</th>
               <th>Result visible</th>
             </tr>
@@ -247,6 +260,9 @@ function ResultsTab({ examId, participants, onView }) {
                     {sectionNos.map((n) => <td className="num hide-sm" key={n}><PctChip value={(p.sections.find((s) => s.no === n) || {}).pct} /></td>)}
                     <td>{eng ? <Chip tone={eng.tone} title={`About ${x.avgSeconds}s per question`}>{eng.label}</Chip> : '—'}</td>
                     <td className="num">{x ? (x.concerns ? <Chip tone={x.concerns >= 3 ? 'bad' : 'warn'}>{x.concerns}</Chip> : <span className="muted">0</span>) : '—'}</td>
+                    <td className="small">{x && x.roles && x.roles.length ? (
+                      <span title={x.roles.join(', ')}>{x.roles.slice(0, 2).join(', ')}{x.roles.length > 2 ? ` +${x.roles.length - 2}` : ''}</span>
+                    ) : <span className="muted">—</span>}</td>
                     <td className="num mono">{formatDuration(p.totalSeconds)}</td>
                     <td className="small">{p.unlocked ? <Chip tone="good">Visible</Chip> : new Date(p.unlockAt).toLocaleDateString()}</td>
                   </tr>
@@ -259,25 +275,133 @@ function ResultsTab({ examId, participants, onView }) {
   );
 }
 
-function AnalyticsTab({ examId }) {
+const NO_FILTERS = { role: '', designation: '', shift: '', verdict: '', q: '' };
+
+/** Filters for the analytics: role they can do, designation, shift, verdict, name. */
+function FilterBar({ options, filters, onChange }) {
+  const [q, setQ] = useState(filters.q);
+  useEffect(() => {
+    const timer = setTimeout(() => q !== filters.q && onChange({ ...filters, q }), 400);
+    return () => clearTimeout(timer);
+  }, [q, filters, onChange]);
+  const active = Object.values(filters).some(Boolean);
+  const select = (key, label, list) => (
+    <label className="filter">
+      <span>{label}</span>
+      <select value={filters[key]} onChange={(e) => onChange({ ...filters, [key]: e.target.value })}>
+        <option value="">All</option>
+        {(list || []).map((x) => <option key={x} value={x}>{x}</option>)}
+      </select>
+    </label>
+  );
+  return (
+    <div className={`filter-bar ${active ? 'filter-active' : ''}`}>
+      {select('role', 'Can do (role)', options && options.roles)}
+      {select('designation', 'Designation', options && options.designations)}
+      {select('shift', 'Shift', options && options.shifts)}
+      {select('verdict', 'Verdict', options && options.verdicts)}
+      <label className="filter filter-grow">
+        <span>Name</span>
+        <input type="search" placeholder="Search name or username" value={q} onChange={(e) => setQ(e.target.value)} />
+      </label>
+      {active && (
+        <button type="button" className="btn btn-ghost btn-sm" onClick={() => { setQ(''); onChange(NO_FILTERS); }}>Clear filters</button>
+      )}
+    </div>
+  );
+}
+
+/** Who falls under a quality, verdict or role — grouped and colour-coded. */
+function DrillPanel({ drill, people, onClose, onView }) {
+  let groups;
+  let title;
+  if (drill.type === 'dim') {
+    title = `${drill.label} — who falls where`;
+    const scored = people.filter((p) => p.dims && p.dims[drill.key] !== undefined).map((p) => ({ ...p, v: p.dims[drill.key] })).sort((x, y) => y.v - x.v);
+    groups = [
+      ['good', 'Strong (70% and above)', scored.filter((p) => p.v >= 70)],
+      ['warn', 'Watch (50–69%)', scored.filter((p) => p.v >= 50 && p.v < 70)],
+      ['bad', 'Needs work (below 50%)', scored.filter((p) => p.v < 50)],
+    ];
+  } else if (drill.type === 'verdict') {
+    title = `Verdict: ${drill.value}`;
+    groups = [[HEADLINE_TONE[drill.value] || 'info', drill.value, people.filter((p) => p.headline === drill.value).map((p) => ({ ...p, v: p.pct }))]];
+  } else {
+    title = `Can do: ${drill.value}`;
+    const yes = people.filter((p) => (p.roles || []).includes(drill.value)).map((p) => ({ ...p, v: p.pct }));
+    const no = people.filter((p) => !(p.roles || []).includes(drill.value)).map((p) => ({ ...p, v: p.pct }));
+    groups = [['info', 'Say they can do it', yes], ['muted', 'Did not tick it', no]];
+  }
+  return (
+    <section className="card drill-panel">
+      <div className="results-head">
+        <h3 className="section-title">{title}</h3>
+        <button type="button" className="btn btn-ghost btn-sm" onClick={onClose}>Close ✕</button>
+      </div>
+      <div className="drill-grid">
+        {groups.map(([tone, label, list]) => (
+          <div key={label} className={`drill-group drill-${tone}`}>
+            <div className="drill-head"><span>{label}</span><Chip tone={tone}>{list.length}</Chip></div>
+            {list.length === 0 ? (
+              <p className="muted small">Nobody.</p>
+            ) : (
+              <ul>
+                {list.map((p) => (
+                  <li key={p.username}>
+                    <button type="button" className="linklike" onClick={() => onView({ username: p.username, name: p.name, designation: p.designation, shift: p.shift })}>{p.name}</button>
+                    <span className="small muted">{[p.designation, p.shift].filter(Boolean).join(' · ')}</span>
+                    <PctChip value={p.v} />
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function AnalyticsTab({ examId, onView }) {
   const [a, setA] = useState(null);
   const [error, setError] = useState('');
   const [teamSummary, setTeamSummary] = useState(null);
   const [allTags, setAllTags] = useState(false);
+  const [filters, setFilters] = useState(NO_FILTERS);
+  const [options, setOptions] = useState(null);
+  const [drill, setDrill] = useState(null);
+  const [loading, setLoading] = useState(false);
   useEffect(() => {
-    api(`/admin/exams/${examId}/analytics`)
+    const qs = new URLSearchParams(Object.entries(filters).filter(([, v]) => v)).toString();
+    setLoading(true);
+    api(`/admin/exams/${examId}/analytics${qs ? `?${qs}` : ''}`)
       .then((d) => {
         setA(d.analytics);
         setTeamSummary(d.team);
+        setOptions(d.filterOptions);
+        setDrill(null);
       })
-      .catch((e) => setError(e.message));
-  }, [examId]);
+      .catch((e) => setError(e.message))
+      .finally(() => setLoading(false));
+  }, [examId, filters]);
+  const people = (teamSummary && teamSummary.people) || [];
+  const verdictCounts = (options ? options.verdicts : []).map((v) => [v, people.filter((p) => p.headline === v).length]).filter(([, n]) => n);
+  const roleCounts = (options ? options.roles : []).map((r) => [r, people.filter((p) => (p.roles || []).includes(r)).length]);
   if (error) return <div className="alert alert-error">{error}</div>;
   if (!a) return <p className="muted">Loading…</p>;
-  if (!a.participants) return <p className="muted">Analytics appear after the first submission.</p>;
+  const bar = <FilterBar options={options} filters={filters} onChange={setFilters} />;
+  if (!a.participants) {
+    return (
+      <div className="stack">
+        {options && (options.roles.length || options.designations.length) ? bar : null}
+        <p className="muted">{Object.values(filters).some(Boolean) ? 'Nobody matches these filters.' : 'Analytics appear after the first submission.'}</p>
+      </div>
+    );
+  }
 
   return (
-    <div className="stack">
+    <div className={`stack ${loading ? 'is-loading' : ''}`}>
+      {bar}
       {teamSummary && (
         <LeaderCard
           title="Team summary"
@@ -299,12 +423,52 @@ function AnalyticsTab({ examId }) {
       {teamSummary && teamSummary.dimensions && teamSummary.dimensions.length > 0 && (
         <section className="card">
           <h3 className="section-title">Team strengths and weaknesses</h3>
-          <p className="muted small">Average score per quality, strongest first.</p>
+          <p className="muted small">Average score per quality, strongest first. <b>Click a quality</b> to see who is strong or weak in it.</p>
           <div className="dim-grid">
-            {teamSummary.dimensions.map((d) => <ScoreBar key={d.key} label={d.label} value={d.average} colored />)}
+            {teamSummary.dimensions.map((d) => (
+              <button
+                type="button"
+                key={d.key}
+                className={`dim-button ${drill && drill.type === 'dim' && drill.key === d.key ? 'on' : ''}`}
+                onClick={() => setDrill({ type: 'dim', key: d.key, label: d.label })}
+              >
+                <ScoreBar label={d.label} value={d.average} colored />
+              </button>
+            ))}
           </div>
         </section>
       )}
+      {(verdictCounts.length > 0 || roleCounts.length > 0) && (
+        <div className="grid-2">
+          {verdictCounts.length > 0 && (
+            <section className="card">
+              <h3 className="section-title">People by verdict</h3>
+              <p className="muted small">Click to see who.</p>
+              <div className="chip-row">
+                {verdictCounts.map(([v, n]) => (
+                  <button type="button" key={v} className="chip-button" onClick={() => setDrill({ type: 'verdict', value: v })}>
+                    <Chip tone={HEADLINE_TONE[v] || 'info'} strong>{v} · {n}</Chip>
+                  </button>
+                ))}
+              </div>
+            </section>
+          )}
+          {roleCounts.length > 0 && (
+            <section className="card">
+              <h3 className="section-title">Who can do what</h3>
+              <p className="muted small">From the question at the end of the exam. Click a job to see who.</p>
+              <div className="chip-row">
+                {roleCounts.map(([r, n]) => (
+                  <button type="button" key={r} className="chip-button" onClick={() => setDrill({ type: 'role', value: r })}>
+                    <Chip tone={n ? 'info' : 'muted'}>{r} · {n}</Chip>
+                  </button>
+                ))}
+              </div>
+            </section>
+          )}
+        </div>
+      )}
+      {drill && <DrillPanel drill={drill} people={people} onClose={() => setDrill(null)} onView={onView} />}
       <details className="card">
         <summary><b>Detailed analytics</b> <span className="muted small">— charts, every question, behaviour patterns, individual profiles</span></summary>
       <div className="stack" style={{ marginTop: '1rem' }}>
@@ -602,17 +766,19 @@ function AnswerGroups({ responses }) {
                       </div>
                       <div className="answer-detail">
                         {r['Question Text (EN)'] && <div className="answer-question">{r['Question Text (EN)']}</div>}
-                        <div>
+                        <div className="answer-line">
                           <span className="answer-label">Chose</span>
                           <b className={`answer-letter answer-${chip.tone}`}>{answered ? r['Option Selected'] : '—'}</b>
-                          {r['Chosen Text'] && <span className="small">{r['Chosen Text']}</span>}
+                          <span className="small">{r['Chosen Text'] || ''}</span>
                         </div>
                         {kind !== 'correct' && r['Best Answer'] && (
-                          <div>
+                          <div className="answer-line">
                             <span className="answer-label">Best</span>
                             <b className="answer-letter answer-good">{r['Best Answer']}</b>
-                            <span className="small">{r['Best Answer Text']}</span>
-                            {r['Also Accepted'] && <span className="small muted"> · also accepted {r['Also Accepted']}</span>}
+                            <span className="small">
+                              {r['Best Answer Text']}
+                              {r['Also Accepted'] && <span className="muted"> · also accepted {r['Also Accepted']}</span>}
+                            </span>
                           </div>
                         )}
                         {r.Interpretation && kind !== 'correct' && <div className="small answer-why">{r.Interpretation}</div>}
@@ -681,6 +847,7 @@ function ResultModal({ exam, participant, onClose }) {
               answers={L.answers}
               strengths={L.strengths}
               gaps={L.gaps}
+              canDo={d.result.roles ? { roles: d.result.roles, other: d.result.rolesOther } : null}
               kpis={st && (
                 <KpiRow>
                   <Kpi label="Overall" value={`${st.totalPct}%`} tone={toneOf(st.totalPct)} sub={L.rank ? `Rank ${L.rank} of ${L.of}` : ''} />
@@ -766,7 +933,7 @@ export default function ExamDetail() {
   const navigate = useNavigate();
   const [exam, setExam] = useState(null);
   const [participants, setParticipants] = useState([]);
-  const [tab, setTab] = useState('questions');
+  const [tab, setTab] = useState('live');
   const [sections, setSections] = useState([]);
   const [replacing, setReplacing] = useState(false);
   const [viewing, setViewing] = useState(null);
@@ -786,6 +953,11 @@ export default function ExamDetail() {
 
   async function setStatus(status) {
     await api(`/admin/exams/${id}/status`, { method: 'PATCH', body: { status } });
+    reload();
+  }
+  async function declareResults() {
+    if (!window.confirm('Declare results now? Everyone who has submitted will see their result, answers and report the next time they log in — without waiting for the unlock date.')) return;
+    await api(`/admin/exams/${id}/declare-results`, { method: 'POST', body: {} });
     reload();
   }
   async function remove() {
@@ -813,6 +985,9 @@ export default function ExamDetail() {
             <option>Closed</option>
             <option>Results Released</option>
           </select>
+          {exam.status !== 'Results Released' && (
+            <button type="button" className="btn btn-secondary" onClick={declareResults} title="Show results to participants now">📣 Declare results now</button>
+          )}
           <Link className="btn btn-secondary" to={`/admin/exams/${id}/edit`}>Edit</Link>
           <button type="button" className="btn btn-secondary" onClick={() => setReplacing(true)}>Find &amp; replace</button>
           <a className="btn btn-primary" href={`/api/admin/exams/${id}/download`}>⬇ Download Excel</a>
@@ -826,17 +1001,18 @@ export default function ExamDetail() {
         <div className="stat"><span className="stat-value">{Math.max(0, exam.participants - exam.submitted - exam.inProgress)}</span><span className="stat-label">Not started</span></div>
       </div>
       <div className="tabs" role="tablist">
-        {[['questions', `Questions (${exam.questionCount})`], ['tags', 'Tags'], ['participants', 'Participants'], ['results', 'Results'], ['analytics', 'Analytics'], ['reports', 'Reports']].map(([k, label]) => (
+        {[['live', '● Live'], ['questions', `Questions (${exam.questionCount})`], ['tags', 'Tags'], ['participants', 'Participants'], ['results', 'Results'], ['analytics', 'Analytics'], ['reports', 'Reports']].map(([k, label]) => (
           <button key={k} type="button" role="tab" aria-selected={tab === k} className={tab === k ? 'active' : ''} onClick={() => setTab(k)}>
             {label}
           </button>
         ))}
       </div>
+      {tab === 'live' && <LiveTab examId={id} onChanged={reload} />}
       {tab === 'questions' && <QuestionBank sections={sections} dimensions={(exam.config || {}).dimensions || {}} />}
       {tab === 'tags' && <TagsTab sections={sections} dimensions={(exam.config || {}).dimensions || {}} />}
       {tab === 'participants' && <ParticipantsTab exam={exam} participants={participants} reload={reload} onView={setViewing} />}
       {tab === 'results' && <ResultsTab examId={exam.id} participants={participants} onView={setViewing} />}
-      {tab === 'analytics' && <AnalyticsTab examId={id} />}
+      {tab === 'analytics' && <AnalyticsTab examId={id} onView={setViewing} />}
       {tab === 'reports' && <ReportsTab examId={id} />}
       {replacing && <FindReplace examId={id} onClose={() => setReplacing(false)} onDone={reload} />}
       {viewing && <ResultModal exam={exam} participant={viewing} onClose={() => setViewing(null)} />}

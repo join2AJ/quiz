@@ -6,6 +6,7 @@ const cookieSession = require('cookie-session');
 const config = require('./config');
 const store = require('./services/store');
 const audit = require('./services/auditService');
+const presence = require('./services/presenceService');
 const authCheck = require('./middleware/authCheck');
 const roleCheck = require('./middleware/roleCheck');
 
@@ -49,8 +50,22 @@ app.use(async (req, res, next) => {
       exam_id_if_active: s.activeExam || null,
       answers_saved_flag: true,
     });
+    if (s.user.role === 'participant') await presence.end(s.user.username, s.sid, 'timed_out').catch(() => {});
     req.session = null;
     return req.path.startsWith('/api/') && req.path !== '/api/auth/login' ? res.status(401).json({ error: 'Session expired' }) : next();
+  }
+  // One device at a time: a session replaced by a login elsewhere ends here.
+  if (s.user.role === 'participant' && req.path.startsWith('/api/') && req.path !== '/api/auth/login' && req.path !== '/api/auth/logout') {
+    let current = true;
+    try {
+      current = await presence.touch(s.user.username, s.sid);
+    } catch {
+      current = true; // never lock people out because presence could not be read
+    }
+    if (!current) {
+      req.session = null;
+      return res.status(401).json({ code: 'SESSION_REPLACED', error: 'You were logged out because this account was used to log in on another device.' });
+    }
   }
   // Refresh at most once a minute so the cookie is not rewritten on every request.
   if (!s.lastSeen || now - s.lastSeen > 60 * 1000) s.lastSeen = now;

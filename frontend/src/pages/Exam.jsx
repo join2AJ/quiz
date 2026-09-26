@@ -36,11 +36,34 @@ export function useSectionTitle() {
   return (s) => (s.name ? t('sectionLabel', { n: s.no, name: pick(s.name, s.nameHi) }) : t('partLabel', { n: s.no }));
 }
 
-function PreExam({ data, onBegin, busy, error }) {
+const mins = (seconds) => Math.round((Number(seconds) || 0) / 60);
+
+/** While `waiting`, polls until the examiner starts the exam (waiting room). */
+function useLive(examId, waiting) {
+  const [live, setLive] = useState(false);
+  useEffect(() => {
+    if (!waiting || live) return undefined;
+    let stop = false;
+    const check = () =>
+      api(`/exam/${examId}/status`)
+        .then((d) => !stop && d.live && setLive(true))
+        .catch(() => {});
+    const timer = setInterval(check, 5000);
+    check();
+    return () => {
+      stop = true;
+      clearInterval(timer);
+    };
+  }, [examId, waiting, live]);
+  return [!waiting || live, setLive];
+}
+
+function PreExam({ data, onBegin, busy, error, live }) {
   const { t, pick, formatDate } = useLang();
   const sectionTitle = useSectionTitle();
   const { exam, sections, totalQuestions } = data;
-  const minutes = exam.estimatedMinutes || totalQuestions;
+  const timing = data.timing || { timed: false, sections: [] };
+  const minutes = timing.timed ? mins(timing.examLimitSeconds) : exam.estimatedMinutes || totalQuestions;
   const named = sections.some((s) => s.name);
   const instructions = pick(exam.instructions, exam.instructionsHi);
   return (
@@ -55,14 +78,17 @@ function PreExam({ data, onBegin, busy, error }) {
         <div className="stat-row">
           <div className="stat"><span className="stat-value">{totalQuestions}</span><span className="stat-label">{t('totalQuestions')}</span></div>
           <div className="stat"><span className="stat-value">{sections.length}</span><span className="stat-label">{named ? t('totalSections') : t('totalParts')}</span></div>
-          <div className="stat"><span className="stat-value">{t('minutes', { n: minutes })}</span><span className="stat-label">{t('estimatedTime')}</span></div>
+          <div className="stat"><span className="stat-value">{t('minutes', { n: minutes })}</span><span className="stat-label">{timing.timed ? t('totalTimeLimit') : t('estimatedTime')}</span></div>
         </div>
         <h2>{named ? t('sections') : t('parts')}</h2>
         <ul className="section-list">
           {sections.map((s) => (
             <li key={s.no}>
               <strong>{sectionTitle(s)}</strong>
-              <span className="muted"> — {t('questionsCount', { n: s.questionCount })}</span>
+              <span className="muted"> — {(() => {
+                const lim = timing.timed && timing.sections.find((x) => x.no === s.no);
+                return lim ? t('partTime', { time: t('minutes', { n: mins(lim.limitSeconds) }), n: s.questionCount }) : t('questionsCount', { n: s.questionCount });
+              })()}</span>
               {pick(s.description, s.descriptionHi) && <p className="muted pre">{pick(s.description, s.descriptionHi)}</p>}
             </li>
           ))}
@@ -73,11 +99,24 @@ function PreExam({ data, onBegin, busy, error }) {
             <div className="instructions pre">{instructions}</div>
           </>
         )}
+        {timing.timed && <div className="alert alert-info timed-rules">{t('timedRules')}</div>}
         {error && <div className="alert alert-error">{error}</div>}
         {exam.status === 'Active' ? (
           <>
+            {live ? (
+              exam.waitingRoom && <div className="alert alert-ok waiting-live" role="status">{t('waitingLive')}</div>
+            ) : (
+              <div className="waiting-room" role="status">
+                <span className="waiting-dot" aria-hidden="true" />
+                <div>
+                  <strong>{t('waitingTitle')}</strong>
+                  <p className="muted small">{t('waitingText')}</p>
+                  <p className="muted small">{t('waitingCheck')}</p>
+                </div>
+              </div>
+            )}
             <p className="muted small">{t('beginNote')}</p>
-            <button type="button" className="btn btn-primary btn-lg" onClick={onBegin} disabled={busy}>
+            <button type="button" className="btn btn-primary btn-lg" onClick={onBegin} disabled={busy || !live}>
               {t('beginExam')}
             </button>
           </>
@@ -112,7 +151,14 @@ export default function Exam() {
   const [reportReason, setReportReason] = useState('unclear');
   const [reportComment, setReportComment] = useState('');
   const [reportDone, setReportDone] = useState(false);
+  const [finishOpen, setFinishOpen] = useState(false);
+  const [notice, setNotice] = useState(null); // part closed by time
+  const [roles, setRoles] = useState([]);
+  const [rolesOther, setRolesOther] = useState('');
+  const [rolesError, setRolesError] = useState(false);
   const [, setTick] = useState(0);
+  const refreshingRef = useRef(false);
+  const autoSubmitRef = useRef(false);
 
   const offsetRef = useRef(0);
   const queueRef = useRef(Promise.resolve());
@@ -156,10 +202,21 @@ export default function Exam() {
           recoverRef.current = recovered;
         }
       }
-      setCurrent(view.progress.current || 1);
+      // With time limits, stay inside the open part (or go to the final review).
+      let start = view.progress.current || 1;
+      const c = view.clock;
+      if (c && c.timed) {
+        if (c.phase === 'final') setMode('review');
+        else {
+          const inPart = view.questions.filter((x) => x.sectionNo === c.current);
+          if (!inPart.some((x) => x.no === start) && inPart.length) start = inPart[0].no;
+          setMode('question');
+        }
+      }
+      setCurrent(start);
       setAnswers(answersNow);
       setFlags(flagsNow);
-      setVisited({ ...view.progress.visited, [view.progress.current || 1]: true });
+      setVisited({ ...view.progress.visited, [start]: true });
       shownAtRef.current = Date.now();
     }
   }, [id, navigate, username]);
@@ -172,6 +229,10 @@ export default function Exam() {
   }, [id]);
 
   const inProgress = data && data.attempt.status === 'in_progress';
+  const [waitFlag, setWaitFlag] = useState(false);
+  const [live, setLive] = useLive(id, !!data && !inProgress && (waitFlag || (data.exam.waitingRoom && !data.exam.live)));
+  const clock = inProgress && data.clock && data.clock.timed ? data.clock : null;
+  const nowServer = () => Date.now() + offsetRef.current;
   useEffect(() => {
     if (!inProgress) return undefined;
     const tick = setInterval(() => setTick((n) => n + 1), 1000);
@@ -229,6 +290,22 @@ export default function Exam() {
     if (inProgress && username) writeBackup(id, username, { startedAt: data.attempt.startedAt, answers, flags });
   }, [answers, flags, inProgress, id, username, data]);
 
+  // Time limits: when a part's time is over, move on; when the exam's time is over, submit.
+  useEffect(() => {
+    if (!clock) return;
+    const now = nowServer();
+    if (clock.phase === 'section' && now >= new Date(clock.sectionDeadline).getTime() + 500) {
+      const closedNo = clock.current;
+      refresh().then((view) => {
+        if (view && view.clock && view.clock.timed) setNotice({ no: closedNo, final: view.clock.phase === 'final' });
+      });
+    } else if (clock.phase === 'final' && now >= new Date(clock.examDeadline).getTime() && !autoSubmitRef.current) {
+      autoSubmitRef.current = true;
+      setNotice({ over: true });
+      submit();
+    }
+  });
+
   // Audit: language switches during the exam.
   useEffect(() => {
     const from = langRef.current;
@@ -258,6 +335,7 @@ export default function Exam() {
 
   function goTo(no, via = 'button') {
     if (!data || no < 1 || no > data.questions.length) return;
+    if (clock && (clock.phase !== 'section' || data.questions[no - 1].sectionNo !== clock.current)) return;
     const now = Date.now();
     qTimeRef.current[current] = (qTimeRef.current[current] || 0) + (now - shownAtRef.current);
     shownAtRef.current = now;
@@ -310,10 +388,62 @@ export default function Exam() {
     try {
       load(await api(`/exam/${id}/start`, { method: 'POST', body: {} }));
     } catch (e) {
-      setError(e.message || t('somethingWrong'));
+      if (e.code === 'WAITING') {
+        setLive(false);
+        setWaitFlag(true);
+      }
+      else setError(e.message || t('somethingWrong'));
     } finally {
       setBusy(false);
     }
+  }
+
+  /** Reload the attempt from the server (after a part ended). */
+  const refresh = useCallback(async () => {
+    if (refreshingRef.current) return null;
+    refreshingRef.current = true;
+    try {
+      await queueRef.current;
+      const view = await api(`/exam/${id}`);
+      load(view);
+      return view;
+    } catch {
+      return null;
+    } finally {
+      refreshingRef.current = false;
+    }
+  }, [id, load]);
+
+  async function finishPart() {
+    if (!clock) return;
+    setBusy(true);
+    try {
+      await queueRef.current;
+      load(await api(`/exam/${id}/section/next`, { method: 'POST', body: { section: clock.current } }));
+      window.scrollTo({ top: 0 });
+    } catch {
+      setError(t('somethingWrong'));
+    } finally {
+      setBusy(false);
+      setFinishOpen(false);
+    }
+  }
+
+  function toggleRole(key) {
+    setRolesError(false);
+    setRoles((list) => {
+      if (key === 'none') return list.includes('none') ? [] : ['none'];
+      const rest = list.filter((k) => k !== 'none');
+      return rest.includes(key) ? rest.filter((k) => k !== key) : [...rest, key];
+    });
+  }
+
+  function askSubmit() {
+    if ((data.exam.roles || []).length && !roles.length && !rolesOther.trim()) {
+      setRolesError(true);
+      return;
+    }
+    openConfirm();
   }
 
   async function submit() {
@@ -322,7 +452,7 @@ export default function Exam() {
     try {
       await queueRef.current; // let pending saves finish first
       // Send every answer on screen too: the server recovers any that never saved.
-      await api(`/exam/${id}/submit`, { method: 'POST', body: { answers, flags } });
+      await api(`/exam/${id}/submit`, { method: 'POST', body: { answers, flags, roles, rolesOther } });
       writeBackup(id, username, null);
       navigate(`/exam/${id}/thank-you`, { replace: true });
     } catch {
@@ -346,7 +476,7 @@ export default function Exam() {
     return (
       <div className="page">
         <TopBar />
-        <PreExam data={data} onBegin={begin} busy={busy} error={error} />
+        <PreExam data={data} onBegin={begin} busy={busy} error={error} live={live} />
       </div>
     );
   }
@@ -362,6 +492,15 @@ export default function Exam() {
   const scenario = pick(q.scenarioEn, q.scenarioHi);
 
   const saveLabel = { saving: t('saving'), saved: t('saved'), error: t('saveFailed') }[saveState];
+  const nowS = nowServer();
+  const partLeft = clock && clock.phase === 'section' ? Math.max(0, (new Date(clock.sectionDeadline).getTime() - nowS) / 1000) : null;
+  const examLeft = clock ? Math.max(0, (new Date(clock.examDeadline).getTime() - nowS) / 1000) : null;
+  const partQuestions = clock && clock.phase === 'section' ? questions.filter((x) => x.sectionNo === clock.current) : questions;
+  const lastInPart = partQuestions.length ? partQuestions[partQuestions.length - 1].no : questions.length;
+  const firstInPart = partQuestions.length ? partQuestions[0].no : 1;
+  const isLastPart = clock && data.timing && clock.current === data.timing.sections[data.timing.sections.length - 1].no;
+  const partUnanswered = partQuestions.filter((x) => !answers[x.no]).length;
+  const timeTone = (left) => (left === null ? '' : left <= 60 ? 'time-bad' : left <= 300 ? 'time-warn' : '');
 
   return (
     <div className="page exam-page">
@@ -372,6 +511,18 @@ export default function Exam() {
             {user ? `${pick(user.name, user.nameHi)} · ` : ''}{t('elapsed')}: <span className="mono">{formatDuration(elapsed)}</span>
           </span>
         </div>
+        {clock && (
+          <div className="exam-clock" role="timer">
+            {partLeft !== null && (
+              <span className={`clock-chip ${timeTone(partLeft)}`}>
+                {t('partLabel', { n: clock.current })} · {t('timeLeftPart')} <b className="mono">{formatDuration(partLeft)}</b>
+              </span>
+            )}
+            <span className={`clock-chip ${partLeft === null ? timeTone(examLeft) : ''}`}>
+              {t('timeLeftExam')} <b className="mono">{formatDuration(examLeft)}</b>
+            </span>
+          </div>
+        )}
         <div className="topbar-right">
           {saveLabel && <span className={`save-state save-${saveState}`} role="status">{saveLabel}</span>}
           <button type="button" className="btn btn-ghost btn-sm palette-toggle" onClick={() => setPaletteOpen(true)}>
@@ -389,10 +540,21 @@ export default function Exam() {
           {mode === 'review' ? (
             <Review
               questions={questions}
+              sections={sections}
               progress={progress}
+              timed={!!clock}
               onJump={(no) => goTo(no, 'review')}
-              onBack={() => setMode('question')}
-              onSubmit={openConfirm}
+              onBack={clock ? null : () => setMode('question')}
+              onSubmit={askSubmit}
+              roleList={data.exam.roles || []}
+              roles={roles}
+              onToggleRole={toggleRole}
+              rolesOther={rolesOther}
+              onRolesOther={(v) => {
+                setRolesOther(v);
+                setRolesError(false);
+              }}
+              rolesError={rolesError}
             />
           ) : (
             <div className="card question-card">
@@ -454,10 +616,14 @@ export default function Exam() {
                 </span>
               </div>
               <div className="question-nav">
-                <button type="button" className="btn btn-secondary" onClick={() => goTo(current - 1)} disabled={current === 1}>
+                <button type="button" className="btn btn-secondary" onClick={() => goTo(current - 1)} disabled={current === firstInPart}>
                   ← {t('previous')}
                 </button>
-                {current < questions.length ? (
+                {clock && current === lastInPart ? (
+                  <button type="button" className="btn btn-primary" onClick={() => setFinishOpen(true)}>
+                    {isLastPart ? t('finishLastPart') : t('finishPart')} →
+                  </button>
+                ) : current < questions.length ? (
                   <button type="button" className="btn btn-primary" onClick={() => goTo(current + 1)}>
                     {t('next')} →
                   </button>
@@ -471,9 +637,15 @@ export default function Exam() {
           )}
           {mode === 'question' && (
             <div className="review-link">
-              <button type="button" className="btn btn-ghost" onClick={openReview}>
-                {t('reviewAndSubmit')}
-              </button>
+              {clock ? (
+                <button type="button" className="btn btn-ghost" onClick={() => setFinishOpen(true)}>
+                  {isLastPart ? t('finishLastPart') : t('finishPart')}
+                </button>
+              ) : (
+                <button type="button" className="btn btn-ghost" onClick={openReview}>
+                  {t('reviewAndSubmit')}
+                </button>
+              )}
             </div>
           )}
           {error && <div className="alert alert-error">{error}</div>}
@@ -483,6 +655,7 @@ export default function Exam() {
           sections={sections}
           current={mode === 'question' ? current : null}
           progress={progress}
+          clock={clock}
           onJump={(no) => goTo(no, 'palette')}
           open={paletteOpen}
           onClose={() => setPaletteOpen(false)}
@@ -519,6 +692,28 @@ export default function Exam() {
                 <button type="button" className="btn btn-primary" onClick={sendReport}>{t('reportSend')}</button>
               </div>
             </>
+          )}
+        </Modal>
+      )}
+
+      {finishOpen && clock && (
+        <Modal title={t('finishPartTitle', { n: clock.current })} onClose={() => !busy && setFinishOpen(false)}>
+          <p>{t('finishPartText', { n: clock.current })}</p>
+          {partUnanswered > 0 && <div className="alert alert-warn">{t('finishPartUnanswered', { n: partUnanswered })}</div>}
+          <div className="modal-actions">
+            <button type="button" className="btn btn-secondary" onClick={() => setFinishOpen(false)} disabled={busy}>{t('cancel')}</button>
+            <button type="button" className="btn btn-primary" onClick={finishPart} disabled={busy}>{t('finishPartYes')}</button>
+          </div>
+        </Modal>
+      )}
+
+      {notice && (
+        <Modal title={notice.over ? t('examTimeOver') : t('partClosedTitle', { n: notice.no })} onClose={() => !notice.over && setNotice(null)}>
+          {!notice.over && <p>{notice.final ? t('partClosedFinal') : t('partClosedText', { n: notice.no })}</p>}
+          {!notice.over && (
+            <div className="modal-actions">
+              <button type="button" className="btn btn-primary" onClick={() => setNotice(null)}>OK</button>
+            </div>
           )}
         </Modal>
       )}

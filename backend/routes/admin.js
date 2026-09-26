@@ -5,7 +5,10 @@ const store = require('../services/store');
 const excel = require('../services/excelService');
 const scoring = require('../services/scoringService');
 const audit = require('../services/auditService');
-const { attemptInfo } = require('./exam');
+const { attemptInfo, finishAttempt, isLive, waitingRoom } = require('./exam');
+const examClock = require('../services/examClock');
+const presence = require('../services/presenceService');
+const { parseRoleLines, DEFAULT_ROLES } = require('../services/roles');
 const { resultCard } = require('./result');
 const leadership = require('../services/leadershipService');
 
@@ -78,6 +81,22 @@ function normalizeConfig(input, existing = {}) {
     const k = clean(key, 60).toLowerCase().replace(/[^a-z0-9_]/g, '_');
     if (k) out.dimensions[k] = { label: clean(d && d.label, 120), labelHi: clean(d && d.labelHi, 120) };
   }
+  // Waiting room (on unless turned off); the start time is set by "Start exam".
+  out.waitingRoom = c.waitingRoom !== false;
+  out.liveAt = (existing && existing.liveAt) || null;
+  // Time limits per part (on unless turned off).
+  out.timeLimits = c.timeLimits !== false;
+  out.sectionExtraMinutes = Math.min(60, Math.max(0, num(c.sectionExtraMinutes, 5)));
+  out.examExtraMinutes = Math.min(60, Math.max(0, num(c.examExtraMinutes, 5)));
+  // Participants see every question with the correct answer once results are out.
+  out.showAnswersInResult = c.showAnswersInResult !== false;
+  // Work participants can tick at the end ("English | Hindi" lines or a list).
+  if (typeof c.rolesText === 'string') {
+    const parsed = parseRoleLines(c.rolesText.split('\n'));
+    out.roles = parsed.length ? parsed : null;
+  } else if (Array.isArray(c.roles) && c.roles.length) {
+    out.roles = c.roles.map((r) => ({ key: clean(r.key, 40), en: clean(r.en, 120), hi: clean(r.hi, 120) })).filter((r) => r.key && r.en);
+  } else out.roles = null;
   return out;
 }
 
@@ -279,6 +298,96 @@ router.patch('/exams/:id/status', async (req, res) => {
   res.json({ exam });
 });
 
+// Waiting room: start the exam for everyone waiting (or put it back to waiting).
+router.post('/exams/:id/go-live', async (req, res) => {
+  const exam = await loadExam(req.params.id);
+  const live = req.body && req.body.live !== false;
+  exam.config = { ...(exam.config || {}), liveAt: live ? new Date().toISOString() : null };
+  if (live && exam.status !== 'Active') exam.status = 'Active';
+  await store.saveExam(exam);
+  await audit.log(req, 'ADMIN_START_EXAM', { admin_username: 'admin', exam_id: exam.id, started: live });
+  res.json({ exam });
+});
+
+// Show results to everyone now, without waiting for the unlock date.
+router.post('/exams/:id/declare-results', async (req, res) => {
+  const exam = await loadExam(req.params.id);
+  const oldStatus = exam.status;
+  exam.status = 'Results Released';
+  await store.saveExam(exam);
+  await audit.log(req, 'ADMIN_DECLARE_RESULTS', { admin_username: 'admin', exam_id: exam.id, old_value: oldStatus, new_value: exam.status });
+  res.json({ exam });
+});
+
+// Who is logged in, waiting, taking the exam or done — refreshed by the Live tab.
+router.get('/exams/:id/live', async (req, res) => {
+  const exam = await loadExam(req.params.id);
+  const [users, attempts, assignments, present, bank] = await Promise.all([
+    store.getUsers(),
+    store.getAttempts(exam.id),
+    store.getAssignments(),
+    presence.list(),
+    store.getQuestionBank(exam),
+  ]);
+  const plan = examClock.plan(exam, bank);
+  // Exams whose time ran out while the person was away are submitted now.
+  for (const at of attempts) {
+    if (at.status === 'in_progress' && examClock.expired(plan, at)) await finishAttempt(req, exam, at, { reason: 'time_over' });
+  }
+  const byUser = new Map(users.map((u) => [u.username, u]));
+  const byAttempt = new Map(attempts.map((a) => [a.username, a]));
+  const byPresence = new Map(present.map((p) => [p.username, p]));
+  const now = Date.now();
+  const people = assignments
+    .filter((a) => a.examId === exam.id)
+    .map((a) => {
+      const u = byUser.get(a.username) || {};
+      const at = byAttempt.get(a.username);
+      const p = byPresence.get(a.username);
+      const row = {
+        username: a.username,
+        name: u.name || a.username,
+        designation: u.designation || '',
+        shift: u.shift || '',
+        login: !p ? 'never' : p.online ? 'online' : p.status === 'online' ? 'away' : p.status,
+        device: p ? p.device : '',
+        loginAt: p ? p.loginAt : null,
+        lastSeen: p ? p.lastSeen : null,
+        logoutAt: p ? p.logoutAt : null,
+        stage: p && p.examId === exam.id ? p.stage : p ? 'home' : null,
+        exam: at ? at.status : 'not_started',
+        answered: at ? Object.values((at.state && at.state.q) || {}).filter((x) => x.answer).length : 0,
+      };
+      if (at && at.status === 'in_progress') {
+        const c = examClock.clock(plan, at, now);
+        row.part = c.current;
+        row.phase = c.phase;
+        row.secondsLeft = c.examDeadline ? Math.round((new Date(c.phase === 'section' ? c.sectionDeadline : c.examDeadline).getTime() - now) / 1000) : null;
+        row.timeOver = examClock.expired(plan, at, now);
+      }
+      if (at && at.status === 'submitted') row.submittedAt = at.submittedAt;
+      return row;
+    })
+    .sort((x, y) => x.name.localeCompare(y.name));
+  res.json({
+    exam: { id: exam.id, title: exam.title, status: exam.status, waitingRoom: waitingRoom(exam), live: isLive(exam), liveAt: (exam.config || {}).liveAt || null },
+    timing: examClock.publicPlan(plan),
+    people,
+    serverTime: new Date(now).toISOString(),
+  });
+});
+
+// Submit an in-progress attempt for the participant (e.g. they left, or time is over).
+router.post('/exams/:id/attempts/:username/submit', async (req, res) => {
+  const exam = await loadExam(req.params.id);
+  const attempt = await store.getAttempt(exam.id, excel.normalizeUsername(req.params.username));
+  if (!attempt || attempt.status !== 'in_progress') throw httpError(409, 'No exam in progress for this participant');
+  await finishAttempt(req, exam, attempt, { reason: 'admin' });
+  res.json({ ok: true });
+});
+
+router.get('/roles/default', (req, res) => res.json({ roles: DEFAULT_ROLES }));
+
 router.delete('/exams/:id', async (req, res) => {
   const exam = await loadExam(req.params.id);
   await store.deleteExam(exam);
@@ -419,13 +528,45 @@ router.get('/exams/:id/analytics', async (req, res) => {
     store.getResponseRows(exam),
     store.getQuestionBank(exam),
   ]);
-  const analytics = scoring.computeAnalytics(summary, responses, bank, exam);
   const [assignments, reports] = await Promise.all([
     store.getAssignments(),
     store.getAudit({ examId: exam.id, event: 'QUESTION_REPORTED' }),
   ]);
-  const assigned = assignments.filter((a) => a.examId === exam.id).length;
-  res.json({ analytics, team: leadership.team({ analytics, summary, responses, bank, exam, assigned, reports }) });
+  const assignedAll = assignments.filter((a) => a.examId === exam.id).length;
+
+  // Filters: role they can do, designation, shift, verdict, name.
+  const f = req.query || {};
+  const uniq = (xs) => [...new Set(xs.filter(Boolean))].sort((x, y) => x.localeCompare(y));
+  const filterOptions = {
+    roles: uniq(summary.flatMap(leadership.rolesOf)),
+    designations: uniq(summary.map((r) => String(r.Designation || ''))),
+    shifts: uniq(summary.map((r) => String(r.Shift || ''))),
+    verdicts: leadership.HEADLINES,
+  };
+  let rows = summary;
+  if (f.role) rows = rows.filter((r) => leadership.rolesOf(r).includes(String(f.role)));
+  if (f.designation) rows = rows.filter((r) => String(r.Designation || '') === String(f.designation));
+  if (f.shift) rows = rows.filter((r) => String(r.Shift || '') === String(f.shift));
+  if (f.q) {
+    const q = String(f.q).toLowerCase();
+    rows = rows.filter((r) => `${r.Name} ${r.Username}`.toLowerCase().includes(q));
+  }
+  if (f.verdict) {
+    const all = leadership.team({ analytics: scoring.computeAnalytics(summary, responses, bank, exam), summary, responses, bank, exam, assigned: assignedAll, reports }) || { people: [] };
+    const keep = new Set(all.people.filter((p) => p.headline === String(f.verdict)).map((p) => p.username));
+    rows = rows.filter((r) => keep.has(r.Username));
+  }
+  const filtered = rows.length !== summary.length || ['role', 'designation', 'shift', 'q', 'verdict'].some((k) => f[k]);
+  const users = new Set(rows.map((r) => r.Username));
+  const resp = filtered ? responses.filter((r) => users.has(r.Username)) : responses;
+  const analytics = scoring.computeAnalytics(rows, resp, bank, exam);
+  const assigned = filtered ? rows.length : assignedAll;
+  res.json({
+    analytics,
+    team: leadership.team({ analytics, summary: rows, responses: resp, bank, exam, assigned, reports: filtered ? [] : reports }),
+    filterOptions,
+    filtered,
+  });
 });
 
 router.get('/exams/:id/download', async (req, res) => {

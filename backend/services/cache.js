@@ -21,8 +21,12 @@ function get(key, ttlMs, loader) {
   return promise;
 }
 
+function del(key) {
+  entries.delete(key);
+}
+
 function clear() {
   entries.clear();
 }
 
-module.exports = { get, clear };
+module.exports = { get, del, clear };

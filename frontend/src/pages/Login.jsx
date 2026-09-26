@@ -5,15 +5,26 @@ import { useAuth } from '../context/AuthContext.jsx';
 import { useLang } from '../context/LanguageContext.jsx';
 import LanguageToggle from '../components/LanguageToggle.jsx';
 import Logo from '../components/Logo.jsx';
+import Modal from '../components/Modal.jsx';
 
 export default function Login() {
   const { user, ready, login } = useAuth();
-  const { t } = useLang();
+  const { t, formatDate } = useLang();
   const navigate = useNavigate();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [conflict, setConflict] = useState(null);
+  const [replaced, setReplaced] = useState(() => {
+    try {
+      const v = sessionStorage.getItem('psq_replaced') === '1';
+      sessionStorage.removeItem('psq_replaced');
+      return v;
+    } catch {
+      return false;
+    }
+  });
 
   async function routeFor(u) {
     if (u.role === 'admin') return '/admin';
@@ -32,20 +43,27 @@ export default function Login() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready]);
 
-  async function onSubmit(e) {
-    e.preventDefault();
+  async function signIn(force) {
     setError('');
+    setReplaced(false);
     setBusy(true);
     try {
-      const u = await login(username, password);
+      const u = await login(username, password, force);
+      setConflict(null);
       navigate(await routeFor(u), { replace: true });
     } catch (err) {
-      if (err.status === 429) setError(t('tooManyAttempts'));
+      if (err.status === 409 && err.code === 'ALREADY_LOGGED_IN') setConflict(err.data);
+      else if (err.status === 429) setError(t('tooManyAttempts'));
       else if (err.status === 401 || err.status === 400) setError(t('invalidCredentials'));
       else setError(t('serverUnavailable')); // network error, 404 (no API behind this site) or 5xx
     } finally {
       setBusy(false);
     }
+  }
+
+  function onSubmit(e) {
+    e.preventDefault();
+    signIn(false);
   }
 
   return (
@@ -79,6 +97,7 @@ export default function Login() {
             required
           />
         </label>
+        {replaced && <div className="alert alert-warn" role="alert">{t('replacedMessage')}</div>}
         {error && (
           <div className="alert alert-error" role="alert">
             {error}
@@ -88,6 +107,15 @@ export default function Login() {
           {busy ? t('signingIn') : t('signIn')}
         </button>
       </form>
+      {conflict && (
+        <Modal title={t('alreadyLoggedInTitle')} onClose={() => setConflict(null)}>
+          <p>{t('alreadyLoggedInText', { device: conflict.device || '—', time: conflict.since ? formatDate(conflict.since, true) : '—' })}</p>
+          <div className="modal-actions">
+            <button type="button" className="btn btn-secondary" onClick={() => setConflict(null)} disabled={busy}>{t('cancel')}</button>
+            <button type="button" className="btn btn-primary" onClick={() => signIn(true)} disabled={busy}>{t('loginHereInstead')}</button>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }

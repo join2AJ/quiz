@@ -1,7 +1,9 @@
 export class ApiError extends Error {
-  constructor(message, status) {
+  constructor(message, status, data) {
     super(message);
     this.status = status;
+    this.data = data || {};
+    this.code = (data && data.code) || '';
   }
 }
 
@@ -19,7 +21,11 @@ export async function api(path, { method = 'GET', body, keepalive = false } = {}
   } catch {
     /* empty body */
   }
-  if (!res.ok) throw new ApiError((data && data.error) || `Request failed (${res.status})`, res.status);
+  if (!res.ok) {
+    // This browser's session was ended by a login on another device.
+    if (res.status === 401 && data && data.code === 'SESSION_REPLACED') window.dispatchEvent(new Event('psq:replaced'));
+    throw new ApiError((data && data.error) || `Request failed (${res.status})`, res.status, data);
+  }
   return data;
 }
 

@@ -61,6 +61,7 @@ test('full admin + participant flow', async () => {
     site: 'Airport',
     examDate: '2026-09-25',
     unlockDays: 10,
+    config: { timeLimits: false },
     sections: [
       {
         name: 'Knowledge',
@@ -96,6 +97,14 @@ test('full admin + participant flow', async () => {
   const pre = await p('GET', `/api/exam/${examId}`);
   assert.equal(pre.data.totalQuestions, 4);
   assert.equal(pre.data.questions, undefined);
+
+  // Waiting room: the exam opens only when the examiner starts it.
+  const waiting = await p('POST', `/api/exam/${examId}/start`);
+  assert.equal(waiting.status, 409);
+  assert.equal(waiting.data.code, 'WAITING');
+  assert.equal((await p('GET', `/api/exam/${examId}/status`)).data.live, false);
+  await admin('POST', `/api/admin/exams/${examId}/go-live`, { live: true });
+  assert.equal((await p('GET', `/api/exam/${examId}/status`)).data.live, true);
 
   const started = await p('POST', `/api/exam/${examId}/start`);
   assert.equal(started.data.questions.length, 4);

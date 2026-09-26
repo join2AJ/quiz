@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { useAuth } from './context/AuthContext.jsx';
 import { useLang } from './context/LanguageContext.jsx';
@@ -28,7 +29,46 @@ function Home() {
   return <Navigate to={user.role === 'admin' ? '/admin' : '/exams'} replace />;
 }
 
+/**
+ * Staff pages: no right-click menu, copying, pasting, text selection or print
+ * shortcut (typing in form fields still works). Admin pages are not affected.
+ */
+function useCopyGuard(active) {
+  useEffect(() => {
+    if (!active) return undefined;
+    const inField = (e) => !!(e.target && e.target.closest && e.target.closest('input, textarea, select'));
+    const block = (e) => {
+      if (!inField(e)) e.preventDefault();
+    };
+    const blockAlways = (e) => e.preventDefault();
+    const keys = (e) => {
+      const k = String(e.key || '').toLowerCase();
+      const mod = e.ctrlKey || e.metaKey;
+      if (mod && ['p', 's', 'u'].includes(k)) e.preventDefault();
+      else if (mod && ['c', 'x', 'v', 'a'].includes(k) && !inField(e)) e.preventDefault();
+      else if (k === 'f12' || (mod && e.shiftKey && ['i', 'j', 'c'].includes(k))) e.preventDefault();
+    };
+    const listeners = [
+      ['contextmenu', blockAlways],
+      ['copy', block],
+      ['cut', block],
+      ['paste', block],
+      ['selectstart', block],
+      ['dragstart', blockAlways],
+      ['keydown', keys],
+    ];
+    listeners.forEach(([ev, fn]) => document.addEventListener(ev, fn));
+    document.body.classList.add('no-copy');
+    return () => {
+      listeners.forEach(([ev, fn]) => document.removeEventListener(ev, fn));
+      document.body.classList.remove('no-copy');
+    };
+  }, [active]);
+}
+
 export default function App() {
+  const { user, ready } = useAuth();
+  useCopyGuard(ready && !(user && user.role === 'admin'));
   return (
     <Routes>
       <Route path="/" element={<Home />} />

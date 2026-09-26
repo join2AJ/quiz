@@ -14,8 +14,30 @@ export function AuthProvider({ children }) {
       .finally(() => setReady(true));
   }, []);
 
-  const login = useCallback(async (username, password) => {
-    const d = await api('/auth/login', { method: 'POST', body: { username, password } });
+  // Logged out because the account logged in on another device.
+  useEffect(() => {
+    const onReplaced = () => {
+      try {
+        sessionStorage.setItem('psq_replaced', '1');
+      } catch {
+        /* ignore */
+      }
+      setUser(null);
+    };
+    window.addEventListener('psq:replaced', onReplaced);
+    return () => window.removeEventListener('psq:replaced', onReplaced);
+  }, []);
+
+  // Heartbeat: keeps "online" accurate for the examiner and notices a login elsewhere.
+  useEffect(() => {
+    if (!user || user.role !== 'participant') return undefined;
+    const beat = () => api('/auth/ping', { method: 'POST', body: {} }).catch(() => {});
+    const timer = setInterval(beat, 60 * 1000);
+    return () => clearInterval(timer);
+  }, [user]);
+
+  const login = useCallback(async (username, password, force = false) => {
+    const d = await api('/auth/login', { method: 'POST', body: { username, password, ...(force ? { force: true } : {}) } });
     setUser(d.user);
     return d.user;
   }, []);

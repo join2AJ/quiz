@@ -437,6 +437,31 @@ async function deleteAttempt(examId, username) {
   x.writeWorkbook(wb, attemptsPath(examId));
 }
 
+// ---------------------------------------------------------------- presence
+// Who is logged in, on which device, and when they were last seen.
+// data/presence.json: { [username]: { sid, device, loginAt, lastSeen, logoutAt, status, examId, stage } }
+
+const presenceFile = () => path.join(config.dataDir, 'presence.json');
+function readPresence() {
+  try {
+    return JSON.parse(fs.readFileSync(presenceFile(), 'utf8'));
+  } catch {
+    return {};
+  }
+}
+async function getPresence(username) {
+  return readPresence()[normalizeUsername(username)] || null;
+}
+async function setPresence(username, value) {
+  ensureDirs();
+  const all = readPresence();
+  all[normalizeUsername(username)] = value;
+  fs.writeFileSync(presenceFile(), JSON.stringify(all));
+}
+async function listPresence() {
+  return Object.entries(readPresence()).map(([username, p]) => ({ username, ...p }));
+}
+
 // ---------------------------------------------------------------- audit log
 // data/audit_log.jsonl, one entry per line. Each entry carries the SHA-256 of
 // the previous entry (tamper-evident chain). See services/auditService.js.
@@ -511,6 +536,9 @@ module.exports = {
   assign,
   unassign,
   getSetting,
+  getPresence,
+  setPresence,
+  listPresence,
   setSetting,
   getLogo,
   setLogo,
