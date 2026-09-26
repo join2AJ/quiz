@@ -18,7 +18,7 @@ const DEFAULT_ROLES = [
   ['pvr', 'Police verification (PVR) follow-up', 'पुलिस सत्यापन (PVR) फ़ॉलो-अप'],
   ['avsec_training', 'AVSEC training', 'AVSEC प्रशिक्षण'],
   ['tot', 'TOT (Training of Trainers)', 'TOT (प्रशिक्षकों का प्रशिक्षण)'],
-  ['ao', 'AO duties', 'AO कार्य'],
+  ['ao', 'AO', 'AO'],
   ['fees', 'Fee collection and receipts', 'शुल्क संग्रह और रसीद'],
   ['records', 'Records, registers and data entry', 'रिकॉर्ड, रजिस्टर और डेटा एंट्री'],
   ['reports', 'Reports and MIS', 'रिपोर्ट और MIS'],
