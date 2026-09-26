@@ -306,6 +306,10 @@ export default function ExamEditor() {
   const [stats, setStats] = useState(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [defaultRoles, setDefaultRoles] = useState([]);
+  useEffect(() => {
+    api('/admin/roles/default').then((d) => setDefaultRoles(d.roles)).catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (!id) {
@@ -343,10 +347,6 @@ export default function ExamEditor() {
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
   const setTh = (k) => (e) => setForm((f) => ({ ...f, thresholds: { ...f.thresholds, [k]: e.target.value } }));
   const setCfg = (patch) => setForm((f) => ({ ...f, config: { ...f.config, ...patch } }));
-  const [defaultRoles, setDefaultRoles] = useState([]);
-  useEffect(() => {
-    api('/admin/roles/default').then((d) => setDefaultRoles(d.roles)).catch(() => {});
-  }, []);
   const rulesList = form.config.remarkRules || [];
   const setRule = (i, k, v) => setCfg({ remarkRules: rulesList.map((r, j) => (j === i ? { ...r, [k]: v } : r)) });
   const moveRule = (i, d) => {
@@ -465,7 +465,8 @@ export default function ExamEditor() {
         </label>
         <p className="muted small">
           Each question is worth its weight in points. Partial-credit options earn the percentage above. Suggested seconds are shown to
-          participants as a guide (the timer turns orange when exceeded); they do not end the question.
+          participants as a guide on each question (the timer turns orange when exceeded) and are used to work out each
+          part's time limit (see Exam day below).
         </p>
       </fieldset>
 
