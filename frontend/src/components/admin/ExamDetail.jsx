@@ -30,6 +30,22 @@ const KIND_CLASS = {
   Unanswered: 'incorrect',
 };
 
+/** Has this person opened their released result? */
+function SeenCell({ p }) {
+  if (p.status !== 'submitted') return <span className="muted">—</span>;
+  const when = (iso) => new Date(iso).toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+  if (p.resultSeen) {
+    return (
+      <span title={`First opened ${when(p.resultSeen.first)} · last ${when(p.resultSeen.last)} · ${p.resultSeen.count} time(s)`}>
+        <Chip tone="good">✓ Seen</Chip>
+        <div className="small muted nowrap">{when(p.resultSeen.last)}{p.resultSeen.count > 1 ? ` · ${p.resultSeen.count}×` : ''}</div>
+      </span>
+    );
+  }
+  if (!p.unlocked) return <span className="small muted" title={`Result unlocks ${new Date(p.unlockAt).toLocaleDateString()}`}>Not released yet</span>;
+  return <Chip tone="warn">Not seen yet</Chip>;
+}
+
 /** Opens the participant's result page as they see it (new tab). */
 function ViewAsStaff({ examId, username, className = 'btn btn-ghost btn-sm' }) {
   return (
@@ -182,6 +198,7 @@ function ParticipantsTab({ exam, participants, reload, onView }) {
                 <th>Status</th>
                 <th>Submitted</th>
                 <th className="num">Score</th>
+                <th>Result seen</th>
                 <th />
               </tr>
             </thead>
@@ -195,6 +212,7 @@ function ParticipantsTab({ exam, participants, reload, onView }) {
                   <td>{statusBadge(p)}</td>
                   <td className="small">{p.submittedAt ? new Date(p.submittedAt).toLocaleString() : '—'}</td>
                   <td className="num"><PctChip value={p.totalPct} /></td>
+                  <td><SeenCell p={p} /></td>
                   <td className="row-actions nowrap">
                     {p.status === 'submitted' && (
                       <button type="button" className="btn btn-ghost btn-sm" onClick={() => onView(p)}>Summary</button>
@@ -229,7 +247,14 @@ function ResultsTab({ examId, participants, onView }) {
   return (
     <div className="stack">
       <div className="results-head">
-        <p className="muted small" style={{ margin: 0 }}>Highest score first. Click a row for the full summary.</p>
+        <p className="muted small" style={{ margin: 0 }}>
+          Highest score first. Click a row for the full summary.{' '}
+          {(() => {
+            const released = done.filter((p) => p.unlocked);
+            const seen = released.filter((p) => p.resultSeen).length;
+            return released.length ? <b>{seen} of {released.length} released results seen.</b> : 'No result released yet.';
+          })()}
+        </p>
         <Legend />
       </div>
       <div className="table-wrap results-table">
@@ -248,6 +273,7 @@ function ResultsTab({ examId, participants, onView }) {
               <th>Can do</th>
               <th className="num">Time</th>
               <th>Result visible</th>
+              <th>Seen by them</th>
               <th />
             </tr>
           </thead>
@@ -276,6 +302,7 @@ function ResultsTab({ examId, participants, onView }) {
                     ) : <span className="muted">—</span>}</td>
                     <td className="num mono">{formatDuration(p.totalSeconds)}</td>
                     <td className="small">{p.unlocked ? <Chip tone="good">Visible</Chip> : new Date(p.unlockAt).toLocaleDateString()}</td>
+                    <td onClick={(e) => e.stopPropagation()}><SeenCell p={p} /></td>
                     <td><ViewAsStaff examId={examId} username={p.username} /></td>
                   </tr>
                 );

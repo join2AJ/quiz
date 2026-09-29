@@ -161,6 +161,10 @@ test('import database, score behaviour with partial credit, audit chain', async 
   assert.equal(rep.answers[3].best, 'D');
   assert.ok(!JSON.stringify(rep).includes('CONCERN'), 'participant report must not show concern labels');
   assert.equal(rep.howCalculated.maxPoints, 8);
+  // Admin can see who has opened their released result.
+  const seenRows = (await admin('GET', `/api/admin/exams/${examId}/participants`)).data.participants;
+  assert.equal(seenRows.find((x) => x.username === 'test.one').resultSeen.count, 1);
+  assert.equal(seenRows.find((x) => x.username === 'test.two').resultSeen, null);
 
   // Analytics: behaviour distribution with interpretation, concerns list.
   const an = (await admin('GET', `/api/admin/exams/${examId}/analytics`)).data.analytics;

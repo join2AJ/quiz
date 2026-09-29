@@ -450,12 +450,31 @@ router.post('/exams/:id/replace', async (req, res) => {
 
 router.get('/exams/:id/participants', async (req, res) => {
   const exam = await loadExam(req.params.id);
-  const [userList, attemptList, assignments] = await Promise.all([
+  const [userList, attemptList, assignments, views] = await Promise.all([
     store.getUsers(),
     store.getAttempts(exam.id),
     store.getAssignments(),
+    store.getAudit({ examId: exam.id, event: 'RESULT_VIEW' }),
   ]);
   const users = new Map(userList.map((u) => [u.username, u]));
+  // Who has opened their released result (the result page, not the countdown).
+  const seen = new Map();
+  // Oldest first; opens less than a minute apart count as one visit.
+  for (const v of [...views].sort((x, y) => String(x.ts).localeCompare(String(y.ts)))) {
+    let d = {};
+    try {
+      d = JSON.parse(v.data || '{}');
+    } catch {
+      d = {};
+    }
+    if (!d.result_was_available) continue;
+    const e = seen.get(v.username);
+    if (!e) seen.set(v.username, { first: v.ts, last: v.ts, count: 1 });
+    else {
+      if (new Date(v.ts) - new Date(e.last) > 60 * 1000) e.count += 1;
+      e.last = v.ts;
+    }
+  }
   const attempts = new Map(attemptList.map((a) => [a.username, a]));
   const participants = assignments
     .filter((a) => a.examId === exam.id)
@@ -477,6 +496,7 @@ router.get('/exams/:id/participants', async (req, res) => {
         sections: r ? r.sections.map((s) => ({ no: s.no, name: s.name, pct: s.pct })) : [],
         knowledgePct: r ? r.knowledgePct : null,
         behaviourPct: r ? r.behaviourPct : null,
+        resultSeen: seen.get(a.username) || null,
       };
     })
     .sort((a, b) => a.name.localeCompare(b.name));
