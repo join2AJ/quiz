@@ -244,6 +244,11 @@ function ResultsTab({ examId, participants, onView }) {
   if (!done.length) return <p className="muted">No submissions yet.</p>;
   const sectionNos = [...new Set(done.flatMap((p) => p.sections.map((s) => s.no)))].sort((a, b) => a - b);
   const sectionName = (no) => (done.flatMap((p) => p.sections).find((s) => s.no === no) || {}).name;
+  // Knowledge / Behaviour columns only when they add something the part columns don't already show.
+  const partPct = (p, no) => (p.sections.find((s) => s.no === no) || {}).pct;
+  const repeats = (key) => sectionNos.some((n) => done.every((p) => p[key] === null || p[key] === undefined || p[key] === partPct(p, n)));
+  const showKnowledge = !repeats('knowledgePct');
+  const showBehaviour = !repeats('behaviourPct');
   return (
     <div className="stack">
       <div className="results-head">
@@ -265,9 +270,9 @@ function ResultsTab({ examId, participants, onView }) {
               <th>Name</th>
               <th>Verdict</th>
               <th className="num">Score</th>
-              <th className="num">Knowledge</th>
-              <th className="num">Behaviour</th>
-              {sectionNos.map((n) => <th className="num hide-sm" key={n} title={sectionName(n)}>Part {n}<div className="th-sub">{sectionName(n)}</div></th>)}
+              {showKnowledge && <th className="num">Knowledge</th>}
+              {showBehaviour && <th className="num">Behaviour</th>}
+              {sectionNos.map((n) => <th className="num" key={n} title={sectionName(n)}>Part {n}<div className="th-sub">{sectionName(n)}</div></th>)}
               <th>Seriousness</th>
               <th className="num">Concerns</th>
               <th>Can do</th>
@@ -292,9 +297,9 @@ function ResultsTab({ examId, participants, onView }) {
                     </td>
                     <td>{x ? <Chip tone={HEADLINE_TONE[x.headline] || 'info'}>{x.headline}</Chip> : <span className="muted">…</span>}</td>
                     <td className="num"><PctChip value={p.totalPct} /></td>
-                    <td className="num"><PctChip value={p.knowledgePct} /></td>
-                    <td className="num"><PctChip value={p.behaviourPct} /></td>
-                    {sectionNos.map((n) => <td className="num hide-sm" key={n}><PctChip value={(p.sections.find((s) => s.no === n) || {}).pct} /></td>)}
+                    {showKnowledge && <td className="num"><PctChip value={p.knowledgePct} /></td>}
+                    {showBehaviour && <td className="num"><PctChip value={p.behaviourPct} /></td>}
+                    {sectionNos.map((n) => <td className="num" key={n}><PctChip value={(p.sections.find((s) => s.no === n) || {}).pct} /></td>)}
                     <td>{eng ? <Chip tone={eng.tone} title={`About ${x.avgSeconds}s per question`}>{eng.label}</Chip> : '—'}</td>
                     <td className="num">{x ? (x.concerns ? <Chip tone={x.concerns >= 3 ? 'bad' : 'warn'}>{x.concerns}</Chip> : <span className="muted">0</span>) : '—'}</td>
                     <td className="small">{x && x.roles && x.roles.length ? (
