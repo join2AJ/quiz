@@ -45,14 +45,15 @@ router.get('/:id', async (req, res) => {
     result_was_available: unlocked,
   });
   if (!unlocked) return res.json({ ...base, locked: true });
-  const [bank, rows] = await Promise.all([store.getQuestionBank(exam), store.getResponseRows(exam, username)]);
-  return res.json({
-    ...base,
-    locked: false,
-    result: resultCard(exam, attempt),
-    report: report.build({ exam, bank, result: attempt.result, rows }),
-  });
+  return res.json({ ...base, locked: false, ...(await participantResult(exam, attempt, username)) });
 });
+
+/** The result and report exactly as the participant sees them. */
+async function participantResult(exam, attempt, username) {
+  const [bank, rows] = await Promise.all([store.getQuestionBank(exam), store.getResponseRows(exam, username)]);
+  return { result: resultCard(exam, attempt), report: report.build({ exam, bank, result: attempt.result, rows }) };
+}
 
 module.exports = router;
 module.exports.resultCard = resultCard;
+module.exports.participantResult = participantResult;

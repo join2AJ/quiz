@@ -71,7 +71,7 @@ const OUTCOME_TONE = { best: 'good', partly: 'info', notBest: 'bad', skipped: 'm
 const bandTone = (pct) => (pct >= 70 ? 'good' : pct >= 50 ? 'warn' : 'bad');
 
 /** What the result means, how to improve, every answer and how it was calculated. */
-function ResultReport({ result, report }) {
+export function ResultReport({ result, report }) {
   const { t, pick } = useLang();
   const [filter, setFilter] = useState('notBest');
   const sectionName = (no) => {
@@ -250,6 +250,50 @@ export default function Result() {
         )}
         <p className="row-actions no-print">
           <Link className="btn btn-ghost" to="/exams">← {t('backToHome')}</Link>
+          {data && <button type="button" className="btn btn-secondary" onClick={() => window.print()}>🖨 {t('printSummary')}</button>}
+        </p>
+      </main>
+    </div>
+  );
+}
+
+/** Admin preview: the participant's result page exactly as they see it. */
+export function AdminResultPreview() {
+  const { id, username } = useParams();
+  const { t, formatDate } = useLang();
+  const [data, setData] = useState(null);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    api(`/admin/exams/${id}/results/${encodeURIComponent(username)}/participant-view`)
+      .then(setData)
+      .catch((e) => setError(e.message));
+  }, [id, username]);
+  return (
+    <div className="page">
+      <TopBar />
+      <main className="container narrow">
+        <div className="alert alert-info no-print preview-banner" role="note">
+          <strong>Admin preview</strong> — this is exactly what {data ? `${data.name} (${data.username})` : username} sees on their result page.
+          {data && (data.visibleToParticipant ? (
+            <div className="small">They can see it now.</div>
+          ) : (
+            <div className="small">
+              Not visible to them yet: until {formatDate(data.attempt.unlockAt)} they only see “your result will be available on …” with a countdown
+              (or until you press “Declare results now”).
+            </div>
+          ))}
+          <div className="small muted">Use EN / HI at the top to check both languages.</div>
+        </div>
+        {error && <div className="alert alert-error">{error}</div>}
+        {!data && !error && <p className="muted">{t('loading')}</p>}
+        {data && (
+          <div className="stack result-page">
+            <ResultCard exam={data.exam} result={data.result} />
+            {data.report && <ResultReport result={data.result} report={data.report} />}
+          </div>
+        )}
+        <p className="row-actions no-print">
+          <Link className="btn btn-ghost" to={`/admin/exams/${id}`}>← Back to the exam</Link>
           {data && <button type="button" className="btn btn-secondary" onClick={() => window.print()}>🖨 {t('printSummary')}</button>}
         </p>
       </main>

@@ -722,3 +722,6 @@ body.no-copy input, body.no-copy textarea, body.no-copy select { -webkit-user-se
 .qe-option textarea { width: 100%; font: inherit; padding: 0.45rem 0.6rem; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); resize: vertical; }
 .qe-radio { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; cursor: pointer; }
 @media (max-width: 700px) { .qe-option { grid-template-columns: 1fr; } }
+
+.preview-banner { margin-bottom: 1rem; }
+.preview-banner .small { margin-top: 0.25rem; }

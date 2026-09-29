@@ -5,11 +5,11 @@ const store = require('../services/store');
 const excel = require('../services/excelService');
 const scoring = require('../services/scoringService');
 const audit = require('../services/auditService');
-const { attemptInfo, finishAttempt, isLive, waitingRoom } = require('./exam');
+const { attemptInfo, finishAttempt, isLive, waitingRoom, publicExam, isUnlocked } = require('./exam');
 const examClock = require('../services/examClock');
 const presence = require('../services/presenceService');
 const { parseRoleLines, DEFAULT_ROLES } = require('../services/roles');
-const { resultCard } = require('./result');
+const { resultCard, participantResult } = require('./result');
 const leadership = require('../services/leadershipService');
 
 const cache = require('../services/cache');
@@ -518,6 +518,24 @@ router.get('/exams/:id/results/:username', async (req, res) => {
     responses,
     posture: scoring.behaviourPosture(responses, exam),
     leadership: leadership.individual({ result: attempt.result, rows: responses, summary, bank, exam }),
+  });
+});
+
+// Admin preview: the participant's result page exactly as they see it (even before release).
+router.get('/exams/:id/results/:username/participant-view', async (req, res) => {
+  const exam = await loadExam(req.params.id);
+  const username = excel.normalizeUsername(req.params.username);
+  const attempt = await store.getAttempt(exam.id, username);
+  if (!attempt || !attempt.result) throw httpError(404, 'No submission');
+  await audit.log(req, 'ADMIN_VIEW_RESULT', { admin_username: 'admin', exam_id: exam.id, viewed_participant_username: username, view: 'as_participant' });
+  res.json({
+    exam: publicExam(exam),
+    attempt: attemptInfo(exam, attempt),
+    name: attempt.result.name,
+    nameHi: attempt.result.nameHi || '',
+    username,
+    visibleToParticipant: isUnlocked(exam, attempt),
+    ...(await participantResult(exam, attempt, username)),
   });
 });
 

@@ -6,7 +6,7 @@ import Login from './pages/Login.jsx';
 import ParticipantHome from './pages/ParticipantHome.jsx';
 import Exam from './pages/Exam.jsx';
 import ThankYou from './pages/ThankYou.jsx';
-import Result from './pages/Result.jsx';
+import Result, { AdminResultPreview } from './pages/Result.jsx';
 import AdminDashboard from './pages/AdminDashboard.jsx';
 
 function Loading() {
@@ -77,6 +77,7 @@ export default function App() {
       <Route path="/exam/:id" element={<RequireRole role="participant"><Exam /></RequireRole>} />
       <Route path="/exam/:id/thank-you" element={<RequireRole role="participant"><ThankYou /></RequireRole>} />
       <Route path="/exam/:id/result" element={<RequireRole role="participant"><Result /></RequireRole>} />
+      <Route path="/preview/:id/:username" element={<RequireRole role="admin"><AdminResultPreview /></RequireRole>} />
       <Route path="/admin/*" element={<RequireRole role="admin"><AdminDashboard /></RequireRole>} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

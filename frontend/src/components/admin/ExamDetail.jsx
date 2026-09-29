@@ -30,6 +30,15 @@ const KIND_CLASS = {
   Unanswered: 'incorrect',
 };
 
+/** Opens the participant's result page as they see it (new tab). */
+function ViewAsStaff({ examId, username, className = 'btn btn-ghost btn-sm' }) {
+  return (
+    <a className={className} href={`/preview/${examId}/${encodeURIComponent(username)}`} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} title="See the result page exactly as this person sees it">
+      👁 View as staff
+    </a>
+  );
+}
+
 const isWide = (x) => Boolean(x.list || (x.people && x.people.length));
 
 /** Plain-language summary for leaders: headline, key numbers, one paragraph and colour-coded answers. */
@@ -190,6 +199,7 @@ function ParticipantsTab({ exam, participants, reload, onView }) {
                     {p.status === 'submitted' && (
                       <button type="button" className="btn btn-ghost btn-sm" onClick={() => onView(p)}>Summary</button>
                     )}
+                    {p.status === 'submitted' && <ViewAsStaff examId={exam.id} username={p.username} />}
                     {p.status !== 'not_started' && (
                       <button type="button" className="btn btn-ghost btn-sm" onClick={() => reset(p)}>Reset</button>
                     )}
@@ -238,6 +248,7 @@ function ResultsTab({ examId, participants, onView }) {
               <th>Can do</th>
               <th className="num">Time</th>
               <th>Result visible</th>
+              <th />
             </tr>
           </thead>
           <tbody>
@@ -265,6 +276,7 @@ function ResultsTab({ examId, participants, onView }) {
                     ) : <span className="muted">—</span>}</td>
                     <td className="num mono">{formatDuration(p.totalSeconds)}</td>
                     <td className="small">{p.unlocked ? <Chip tone="good">Visible</Chip> : new Date(p.unlockAt).toLocaleDateString()}</td>
+                    <td><ViewAsStaff examId={examId} username={p.username} /></td>
                   </tr>
                 );
               })}
@@ -879,6 +891,7 @@ function ResultModal({ exam, participant, onClose }) {
         </div>
       )}
       <div className="modal-actions">
+        {d && <ViewAsStaff examId={exam.id} username={participant.username} className="btn btn-ghost" />}
         {d && <button type="button" className="btn btn-ghost" onClick={() => setPrinting(true)} title="Summary and every answer, ready to print or save as PDF">Print / Save PDF</button>}
         <button type="button" className="btn btn-secondary" onClick={onClose}>Close</button>
       </div>
