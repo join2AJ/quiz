@@ -74,7 +74,36 @@ function outcomeOf(row) {
   return 'notBest';
 }
 
-function build({ exam, bank, result, rows }) {
+const firstName = (full) => String(full || '').trim().split(/\s+/)[0] || '';
+const lowerFirst = (t) => (t && /^[A-Z][a-z]/.test(t) ? t[0].toLowerCase() + t.slice(1) : t || '');
+
+/**
+ * A short feedback paragraph addressed to the person: their remark, their
+ * strongest part and the part to work on first.
+ */
+function personalNote(result, remarks, b) {
+  const nameEn = firstName(result.name);
+  const nameHi = firstName(result.nameHi) || nameEn;
+  const parts = (result.sections || []).filter((x) => x.total > 0);
+  const best = [...parts].sort((x, y) => y.pct - x.pct)[0];
+  const worst = [...parts].sort((x, y) => x.pct - y.pct)[0];
+  const remark = (remarks || [])[0];
+  const baseEn = remark && remark.en ? remark.en : b.meanEn;
+  const baseHi = remark && remark.hi ? remark.hi : b.meanHi;
+  const en = [`${nameEn}, ${lowerFirst(baseEn)}`];
+  const hi = [`${nameHi}, ${baseHi}`];
+  if (best && best.pct >= 70) {
+    en.push(`Your strongest part was ${best.name} (${best.pct}%) — well done.`);
+    hi.push(`आपका सबसे अच्छा भाग ${best.nameHi || best.name} (${best.pct}%) रहा — बहुत अच्छा।`);
+  }
+  if (worst && worst !== best && worst.pct < 70) {
+    en.push(`Focus first on ${worst.name} (${worst.pct}%) — the points below show exactly what to work on.`);
+    hi.push(`सबसे पहले ${worst.nameHi || worst.name} (${worst.pct}%) पर ध्यान दें — नीचे दिए बिंदु बताते हैं कि किस पर काम करना है।`);
+  }
+  return { en: en.join(' '), hi: hi.join(' ') };
+}
+
+function build({ exam, bank, result, rows, remarks }) {
   const b = band(result.totalPct);
   const byNo = new Map(rows.map((r) => [Number(r['Question No']), r]));
 
@@ -123,9 +152,16 @@ function build({ exam, bank, result, rows }) {
         });
 
   const weights = bank.questions.map((q) => Number(q.weight) || 1);
+  // Good points: strong parts and strong areas (70%+).
+  const goodPoints = [
+    ...(result.sections || []).filter((x) => x.total > 0 && x.pct >= 70).map((x) => ({ key: `part-${x.no}`, label: x.name, labelHi: x.nameHi || '', pct: x.pct })),
+    ...strengths,
+  ].filter((x, i, all) => all.findIndex((y) => y.label === x.label) === i);
   return {
     band: { en: b.en, hi: b.hi },
     meaning: { en: b.meanEn, hi: b.meanHi },
+    personal: personalNote(result, remarks, b),
+    goodPoints,
     strengths,
     improve,
     topics: [...topics.values()],

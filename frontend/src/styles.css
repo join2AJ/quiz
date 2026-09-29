@@ -725,3 +725,10 @@ body.no-copy input, body.no-copy textarea, body.no-copy select { -webkit-user-se
 
 .preview-banner { margin-bottom: 1rem; }
 .preview-banner .small { margin-top: 0.25rem; }
+
+.feedback-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1.25rem; }
+.feedback-good h3 { color: var(--ok); }
+.feedback-improve h3 { color: var(--warn); }
+.good-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.5rem; }
+.good-list li { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; padding: 0.7rem 0.9rem; border-radius: var(--radius); border: 1px solid var(--border); border-left: 4px solid var(--good-edge); }
+.topics-line { margin: 0.75rem 0 0; line-height: 1.6; }

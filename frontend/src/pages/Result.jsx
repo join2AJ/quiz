@@ -34,35 +34,6 @@ export function ResultCard({ exam, result }) {
       {result.sections.map((s) => (
         <ScoreBar key={s.no} label={`${t('sectionLabel', { n: s.no, name: pick(s.name, s.nameHi) })} · ${s.correct}/${s.total}`} value={s.pct} colored />
       ))}
-      {result.dimensions && result.dimensions.length > 0 && (
-        <>
-          <h2>{t('dimensionScores')}</h2>
-          {[
-            ['KNOWLEDGE', t('knowledgeAreas')],
-            ['BEHAVIOUR', t('behaviourAreas')],
-            ['', ''],
-          ].map(([group, heading]) => {
-            const list = result.dimensions.filter((d) =>
-              group ? d.group === group : !['KNOWLEDGE', 'BEHAVIOUR'].includes(d.group),
-            );
-            if (!list.length) return null;
-            return (
-              <div key={group || 'other'} className="dimension-group">
-                {heading && <h3>{heading}</h3>}
-                {list.map((d) => (
-                  <ScoreBar key={d.key} label={pick(d.label, d.labelHi)} value={d.pct} colored />
-                ))}
-              </div>
-            );
-          })}
-        </>
-      )}
-      <div className="remarks">
-        <h2>{t('remarks')}</h2>
-        {result.remarks.map((r) => (
-          <p key={r.key}>{pick(r.en, r.hi)}</p>
-        ))}
-      </div>
     </div>
   );
 }
@@ -86,48 +57,50 @@ export function ResultReport({ result, report }) {
     <>
       <section className="card report-card">
         <div className="report-head">
-          <h2>{t('whatItMeans')}</h2>
+          <h2>{t('yourFeedback')}</h2>
           <span className={`chip chip-strong chip-${bandTone(result.totalPct)}`}>{t('yourLevel')}: {pick(report.band.en, report.band.hi)}</span>
         </div>
-        <p className="report-meaning">{pick(report.meaning.en, report.meaning.hi)}</p>
-        {report.strengths.length > 0 && (
-          <div className="report-block">
-            <h3>{t('youAreStrongIn')}</h3>
-            <div className="chip-row">
-              {report.strengths.map((a) => (
-                <span key={a.key} className="chip chip-good">{pick(a.label, a.labelHi)} · {a.pct}%</span>
-              ))}
-            </div>
+        <p className="report-meaning">{pick((report.personal || report.meaning).en, (report.personal || report.meaning).hi)}</p>
+        <div className="feedback-grid">
+          <div className="report-block feedback-good">
+            <h3>✓ {t('yourGoodPoints')}</h3>
+            {(report.goodPoints || []).length ? (
+              <ul className="good-list">
+                {report.goodPoints.map((a) => (
+                  <li key={a.key}>
+                    <span>{pick(a.label, a.labelHi)}</span>
+                    <span className="pct pct-good">{a.pct}%</span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="muted small">{t('noGoodPointsYet')}</p>
+            )}
           </div>
-        )}
-        {report.improve.length > 0 && (
-          <div className="report-block">
-            <h3>{t('howToImprove')}</h3>
-            <ul className="improve-list">
-              {report.improve.map((a) => (
-                <li key={a.key} className={`improve-${bandTone(a.pct)}`}>
-                  <div className="improve-head">
-                    <strong>{pick(a.label, a.labelHi)}</strong>
-                    <span className={`pct pct-${bandTone(a.pct)}`}>{a.pct}%</span>
-                  </div>
-                  <p>{pick(a.tip.en, a.tip.hi)}</p>
-                </li>
-              ))}
-            </ul>
+          <div className="report-block feedback-improve">
+            <h3>↗ {t('pointsToImprove')}</h3>
+            {report.improve.length ? (
+              <ul className="improve-list">
+                {report.improve.map((a) => (
+                  <li key={a.key} className={`improve-${bandTone(a.pct)}`}>
+                    <div className="improve-head">
+                      <strong>{pick(a.label, a.labelHi)}</strong>
+                      <span className={`pct pct-${bandTone(a.pct)}`}>{a.pct}%</span>
+                    </div>
+                    <p>{pick(a.tip.en, a.tip.hi)}</p>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="muted small">{t('nothingToImprove')}</p>
+            )}
+            {report.topics.length > 0 && (
+              <p className="small topics-line">
+                <b>{t('topicsToRevise')}:</b> {report.topics.map((x) => x.topic).join(', ')}
+              </p>
+            )}
           </div>
-        )}
-        {report.topics.length > 0 && (
-          <div className="report-block">
-            <h3>{t('topicsToRevise')}</h3>
-            <ul className="topic-list">
-              {report.topics.map((x) => (
-                <li key={x.topic}>
-                  <strong>{x.topic}</strong> <span className="muted small">— {t('seeQuestions', { list: x.questions.join(', ') })}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
+        </div>
       </section>
 
       {answers.length > 0 && (

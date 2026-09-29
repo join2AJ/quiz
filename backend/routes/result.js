@@ -51,7 +51,8 @@ router.get('/:id', async (req, res) => {
 /** The result and report exactly as the participant sees them. */
 async function participantResult(exam, attempt, username) {
   const [bank, rows] = await Promise.all([store.getQuestionBank(exam), store.getResponseRows(exam, username)]);
-  return { result: resultCard(exam, attempt), report: report.build({ exam, bank, result: attempt.result, rows }) };
+  const card = resultCard(exam, attempt);
+  return { result: card, report: report.build({ exam, bank, result: attempt.result, rows, remarks: card.remarks }) };
 }
 
 module.exports = router;

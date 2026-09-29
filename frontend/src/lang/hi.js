@@ -209,6 +209,12 @@ const hi = {
   calcAreas: 'क्षेत्र स्कोर बताते हैं कि हर विषय या गुण से जुड़े प्रश्नों में आपने कैसा किया।',
   printSummary: 'मेरा सारांश प्रिंट करें',
   sectionWise: 'भाग-वार स्कोर',
+
+  yourFeedback: 'आपके लिए प्रतिक्रिया',
+  yourGoodPoints: 'आपकी अच्छी बातें',
+  pointsToImprove: 'सुधार के बिंदु',
+  noGoodPointsYet: 'लगे रहें — अंक बढ़ने पर आपकी खूबियाँ यहाँ दिखेंगी।',
+  nothingToImprove: 'कोई कमज़ोर क्षेत्र नहीं मिला। अच्छा काम जारी रखें।',
 };
 
 export default hi;

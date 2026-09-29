@@ -209,6 +209,12 @@ const en = {
   calcAreas: 'Area scores show how you did on the questions about each topic or quality.',
   printSummary: 'Print my summary',
   sectionWise: 'Part-wise scores',
+
+  yourFeedback: 'Your feedback',
+  yourGoodPoints: 'Your good points',
+  pointsToImprove: 'Points to improve',
+  noGoodPointsYet: 'Keep going — your strengths will show here as your scores grow.',
+  nothingToImprove: 'No weak areas found. Keep up the good work.',
 };
 
 export default en;
