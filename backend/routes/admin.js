@@ -165,7 +165,9 @@ function normalizeSections(sections) {
 
 async function examStats(exam, assignments) {
   const assigned = (assignments || (await store.getAssignments())).filter((a) => a.examId === exam.id);
-  const attempts = await store.getAttempts(exam.id);
+  // Only people still assigned (a removed participant's old attempt is not counted).
+  const names = new Set(assigned.map((a) => a.username));
+  const attempts = (await store.getAttempts(exam.id)).filter((a) => names.has(a.username));
   return {
     participants: assigned.length,
     submitted: attempts.filter((a) => a.status === 'submitted').length,
@@ -561,7 +563,7 @@ router.get('/exams/:id/results/:username/participant-view', async (req, res) => 
 
 router.get('/exams/:id/analytics', async (req, res) => {
   const exam = await loadExam(req.params.id);
-  const [summary, responses, bank] = await Promise.all([
+  let [summary, responses, bank] = await Promise.all([
     store.getSummaryRows(exam),
     store.getResponseRows(exam),
     store.getQuestionBank(exam),
@@ -571,6 +573,10 @@ router.get('/exams/:id/analytics', async (req, res) => {
     store.getAudit({ examId: exam.id, event: 'QUESTION_REPORTED' }),
   ]);
   const assignedAll = assignments.filter((a) => a.examId === exam.id).length;
+  // Analyse only people still assigned to the exam (removed participants are left out).
+  const assignedNames = new Set(assignments.filter((a) => a.examId === exam.id).map((a) => a.username));
+  summary = summary.filter((r) => assignedNames.has(r.Username));
+  responses = responses.filter((r) => assignedNames.has(r.Username));
 
   // Filters: role they can do, designation, shift, verdict, name.
   const f = req.query || {};

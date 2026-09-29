@@ -247,8 +247,10 @@ function ResultsTab({ examId, participants, onView }) {
   // Knowledge / Behaviour columns only when they add something the part columns don't already show.
   const partPct = (p, no) => (p.sections.find((s) => s.no === no) || {}).pct;
   const repeats = (key) => sectionNos.some((n) => done.every((p) => p[key] === null || p[key] === undefined || p[key] === partPct(p, n)));
-  const showKnowledge = !repeats('knowledgePct');
-  const showBehaviour = !repeats('behaviourPct');
+  // With two or more parts the part columns say it all; the combined Knowledge /
+  // Behaviour figures would repeat them with different numbers.
+  const showKnowledge = sectionNos.length < 2 && !repeats('knowledgePct');
+  const showBehaviour = sectionNos.length < 2 && !repeats('behaviourPct');
   return (
     <div className="stack">
       <div className="results-head">
@@ -352,6 +354,75 @@ function FilterBar({ options, filters, onChange }) {
         <button type="button" className="btn btn-ghost btn-sm" onClick={() => { setQ(''); onChange(NO_FILTERS); }}>Clear filters</button>
       )}
     </div>
+  );
+}
+
+/** Everyone's integrity signals and behaviour answers that were not the preferred one, with why. */
+function IssuesByPerson({ issues, onView }) {
+  const [only, setOnly] = useState('all');
+  const list = issues.filter((x) => (only === 'concern' ? x.concerns > 0 : only === 'integrity' ? x.integrity.length > 0 : true));
+  const KIND_LABEL = { concern: ['bad', 'Concern'], partial: ['info', 'Partly right'], other: ['warn', 'Not preferred'] };
+  return (
+    <section className="card">
+      <div className="results-head">
+        <div>
+          <h3 className="section-title">Issues by person</h3>
+          <p className="muted small" style={{ margin: 0 }}>Integrity signals and every behaviour answer that was not the preferred one — what they chose, why it matters and the best answer. Most concerns first.</p>
+        </div>
+        <div className="segmented" role="group" aria-label="Show">
+          <button type="button" className={only === 'all' ? 'on' : ''} onClick={() => setOnly('all')}>All ({issues.length})</button>
+          <button type="button" className={only === 'concern' ? 'on' : ''} onClick={() => setOnly('concern')}>With concerns ({issues.filter((x) => x.concerns).length})</button>
+          <button type="button" className={only === 'integrity' ? 'on' : ''} onClick={() => setOnly('integrity')}>Integrity ({issues.filter((x) => x.integrity.length).length})</button>
+        </div>
+      </div>
+      {list.length === 0 && <p className="muted">Nobody.</p>}
+      <div className="stack-sm" style={{ marginTop: '0.75rem' }}>
+        {list.map((x) => (
+          <details key={x.username} className={`issue-person ${x.concerns ? 'issue-bad' : x.integrity.some((i) => i.tone === 'bad') ? 'issue-bad' : 'issue-warn'}`} open={x.concerns > 0}>
+            <summary>
+              <span className="cell-name">{x.name}</span>
+              <Chip tone={HEADLINE_TONE[x.headline] || 'info'}>{x.headline}</Chip>
+              <PctChip value={x.pct} />
+              <span className="chip-row issue-counts">
+                {x.concerns > 0 && <Chip tone="bad">{x.concerns} concern{x.concerns > 1 ? 's' : ''}</Chip>}
+                {x.behaviour.length - x.concerns > 0 && <Chip tone="warn">{x.behaviour.length - x.concerns} not preferred</Chip>}
+                {x.integrity.length > 0 && <Chip tone={x.integrity.some((i) => i.tone === 'bad') ? 'bad' : 'warn'}>integrity</Chip>}
+              </span>
+            </summary>
+            <div className="issue-body">
+              {x.integrity.length > 0 && (
+                <div className="issue-integrity">
+                  <div className="sg-label">Integrity</div>
+                  <ul>
+                    {x.integrity.map((i) => <li key={i.text} className={`text-${i.tone === 'bad' ? 'bad' : 'warn'}`}>{i.text}</li>)}
+                  </ul>
+                </div>
+              )}
+              {x.behaviour.length > 0 && (
+                <div className="table-wrap">
+                  <table className="table table-compact issue-table">
+                    <thead><tr><th>Q</th><th>Topic</th><th>Result</th><th>They chose</th><th>Why it matters</th><th>Best answer</th></tr></thead>
+                    <tbody>
+                      {x.behaviour.map((b) => (
+                        <tr key={b.qid} className={b.kind === 'concern' ? 'row-concern' : ''}>
+                          <td><span className="mono qid">{b.qid}</span></td>
+                          <td className="small">{b.category}</td>
+                          <td><Chip tone={KIND_LABEL[b.kind][0]}>{KIND_LABEL[b.kind][1]}</Chip></td>
+                          <td className="small"><b className={`answer-letter answer-${b.kind === 'concern' ? 'bad' : 'info'}`}>{b.chose}</b> {b.chosenText}</td>
+                          <td className="small">{b.why || '—'}</td>
+                          <td className="small"><b className="answer-letter answer-good">{b.best}</b> {b.bestText}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              <button type="button" className="btn btn-ghost btn-sm" onClick={() => onView({ username: x.username, name: x.name })}>Open full summary →</button>
+            </div>
+          </details>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -464,6 +535,7 @@ function AnalyticsTab({ examId, onView }) {
           )}
         />
       )}
+      {teamSummary && teamSummary.issues && teamSummary.issues.length > 0 && <IssuesByPerson issues={teamSummary.issues} onView={onView} />}
       {teamSummary && teamSummary.dimensions && teamSummary.dimensions.length > 0 && (
         <section className="card">
           <h3 className="section-title">Team strengths and weaknesses</h3>

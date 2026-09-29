@@ -732,3 +732,14 @@ body.no-copy input, body.no-copy textarea, body.no-copy select { -webkit-user-se
 .good-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.5rem; }
 .good-list li { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; padding: 0.7rem 0.9rem; border-radius: var(--radius); border: 1px solid var(--border); border-left: 4px solid var(--good-edge); }
 .topics-line { margin: 0.75rem 0 0; line-height: 1.6; }
+
+/* ------------------------------------------------------------ issues by person */
+.issue-person { border: 1px solid var(--border); border-left: 5px solid var(--warn-edge); border-radius: var(--radius); background: var(--surface); }
+.issue-person.issue-bad { border-left-color: var(--bad-edge); }
+.issue-person > summary { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.75rem; padding: 0.8rem 1rem; cursor: pointer; }
+.issue-counts { margin-left: auto; }
+.issue-body { padding: 0 1rem 1rem; display: flex; flex-direction: column; gap: 0.75rem; }
+.issue-integrity ul { margin: 0.25rem 0 0; padding-left: 1.2rem; }
+.text-bad { color: var(--danger); }
+.issue-table td { vertical-align: top; }
+.issue-table tr.row-concern td { background: color-mix(in srgb, var(--danger-soft) 55%, transparent); }

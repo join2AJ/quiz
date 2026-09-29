@@ -342,6 +342,43 @@ function team({ analytics, summary, responses, bank, exam, assigned, reports }) 
   ]
     .filter(Boolean)
     .join(' ');
+  // Issues by person: integrity signals and every behaviour answer that was
+  // not the preferred one, with what it reveals and the best answer.
+  const byQ = new Map((bank.questions || []).map((q) => [q.no, q]));
+  const optText = (q, k) => ((q && q.options.find((o) => o.key === k)) || {}).en || '';
+  const issues = people
+    .map((p) => {
+      const rows = byUser.get(p.username) || [];
+      const s = summary.find((x) => x.Username === p.username) || {};
+      const integrity = [];
+      if (p.eng.level === 'rushed') integrity.push({ tone: 'bad', text: `Rushed — ${p.eng.tooFast} of ${p.eng.answered} answers in under ${TOO_FAST_SECONDS} seconds; result unreliable` });
+      else if (p.eng.level === 'quick') integrity.push({ tone: 'warn', text: `Very quick — about ${p.eng.avgSeconds} s per question` });
+      else if (p.eng.tooFast) integrity.push({ tone: 'warn', text: `${p.eng.tooFast} answer(s) in under ${TOO_FAST_SECONDS} seconds` });
+      if (p.tabs) integrity.push({ tone: p.tabs >= 3 ? 'bad' : 'warn', text: `Left the exam tab ${p.tabs} time(s)${s['Time Away From Exam Tab'] && s['Time Away From Exam Tab'] !== '00:00:00' ? `, away ${s['Time Away From Exam Tab']}` : ''}` });
+      const unanswered = Number(s.Unanswered) || 0;
+      if (unanswered) integrity.push({ tone: 'warn', text: `${unanswered} question(s) not answered` });
+      const behaviour = rows
+        .filter((r) => r.Type === 'BEHAVIOUR' && r['Option Selected'] && r['Option Selected'] !== '—' && Number(r.Credit) < 1)
+        .map((r) => {
+          const q = byQ.get(Number(r['Question No']));
+          const concern = r['Response Type'] === 'Concern';
+          return {
+            qid: r.QID || `Q${r['Question No']}`,
+            category: r.Category,
+            kind: concern ? 'concern' : Number(r.Credit) > 0 ? 'partial' : 'other',
+            chose: r['Option Selected'],
+            chosenText: optText(q, r['Option Selected']),
+            why: String(r.Interpretation || '').replace(/^(CRITICAL )?CONCERN:\s*/i, ''),
+            best: q ? q.correct : '',
+            bestText: optText(q, q && q.correct),
+          };
+        })
+        .sort((x, y) => (x.kind === 'concern' ? 0 : 1) - (y.kind === 'concern' ? 0 : 1));
+      return { username: p.username, name: p.name, headline: p.headline, pct: p.pct, integrity, behaviour, concerns: behaviour.filter((b) => b.kind === 'concern').length };
+    })
+    .filter((x) => x.integrity.length || x.behaviour.length)
+    .sort((x, y) => y.concerns - x.concerns || y.integrity.length - x.integrity.length);
+
   const stats = {
     submitted: n,
     assigned,
@@ -370,7 +407,7 @@ function team({ analytics, summary, responses, bank, exam, assigned, reports }) 
       headline: p.headline,
     }))
     .sort((a, b) => b.pct - a.pct);
-  return { paragraph, answers, stats, dimensions, people: roster };
+  return { paragraph, answers, stats, dimensions, people: roster, issues };
 }
 
 module.exports = { individual, team, engagement, tone, headlineFor, rolesOf, HEADLINES, withBestAnswers, TOO_FAST_SECONDS, QUICK_AVG_SECONDS };
