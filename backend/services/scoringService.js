@@ -36,8 +36,8 @@ const REMARKS = {
     hi: 'अच्छा प्रयास। इस आकलन के आधार पर आपकी ज्ञान की नींव विकसित हो रही है — परीक्षा के दौरान चिह्नित किए गए विषयों पर ध्यान दें।',
   },
   growth: {
-    en: 'Thank you for participating. There is strong room for growth — speak with your team lead about a learning plan.',
-    hi: 'भाग लेने के लिए धन्यवाद। सुधार की अच्छी संभावना है — सीखने की योजना के लिए अपने टीम लीड से बात करें।',
+    en: 'Thank you for participating. There is strong room for growth — go through every answer, observe how experienced colleagues handle real cases, learn and adapt the way you work.',
+    hi: 'भाग लेने के लिए धन्यवाद। सुधार की अच्छी संभावना है — हर उत्तर देखें, अनुभवी सहकर्मी वास्तविक मामलों को कैसे संभालते हैं यह ध्यान से देखें, सीखें और अपने काम करने का तरीका ढालें।',
   },
   gapKnowledge: {
     en: 'Your regulatory knowledge is solid. Your next growth area is behavioural judgment in complex situations.',

@@ -1070,9 +1070,34 @@ router.post('/exams/:id/update-text', async (req, res) => {
       if (changed.length) changes.push({ qid: q.qid, fields: changed });
     }
   }
+  // Remark wording: rules whose condition matches an existing rule get the new text.
+  const norm = (c) => String(c || '').replace(/\s+/g, ' ').trim();
+  const rules = ((exam.config || {}).remarkRules || []).map((r) => ({ ...r }));
+  let remarksChanged = 0;
+  for (const t of (db.remarks_config || {}).thresholds || []) {
+    const rule = rules.find((r) => norm(r.condition) === norm(t.condition));
+    if (!rule) continue;
+    const en = clean(t.remark_en, 2000);
+    const hi = clean(t.remark_hi, 2000);
+    if ((en && en !== rule.en) || (hi && hi !== rule.hi)) {
+      if (en) rule.en = en;
+      if (hi) rule.hi = hi;
+      remarksChanged += 1;
+    }
+  }
+  if (remarksChanged) changes.push({ qid: 'Remarks', fields: [`${remarksChanged} remark(s)`] });
   const notInExam = [...incoming.keys()].filter((id) => !matched.has(id));
+  if (req.body.apply && remarksChanged) {
+    exam.config = { ...(exam.config || {}), remarkRules: rules };
+    await store.saveExam(exam);
+    const summary = await store.getSummaryRows(exam);
+    if (summary.length) {
+      const bank = await store.getQuestionBank(exam);
+      await store.rewriteSummary(exam, scoring.refreshRemarks(summary, exam), (s2, r2) => scoring.buildAnalyticsSheet(s2, r2, bank, exam));
+    }
+  }
+  if (req.body.apply && changes.some((c) => c.qid !== 'Remarks')) await store.saveQuestionBank(exam, normalizeSections(sections));
   if (req.body.apply && changes.length) {
-    await store.saveQuestionBank(exam, normalizeSections(sections));
     await audit.log(req, 'ADMIN_EDIT_TEXT', {
       admin_username: 'admin',
       exam_id: exam.id,

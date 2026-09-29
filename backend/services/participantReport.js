@@ -24,15 +24,15 @@ const BANDS = [
     min: 50,
     en: 'Fair',
     hi: 'संतोषजनक',
-    meanEn: 'You know the basics, but several answers were not the best choice. Revise the areas below and discuss them with your supervisor.',
-    meanHi: 'आप मूल बातें जानते हैं, लेकिन कई उत्तर सबसे अच्छे विकल्प नहीं थे। नीचे दिए गए क्षेत्रों को दोहराएँ और अपने पर्यवेक्षक के साथ चर्चा करें।',
+    meanEn: 'You know the basics, but several answers were not the best choice. Revise the areas below, observe how these situations are handled at work and adapt your approach.',
+    meanHi: 'आप मूल बातें जानते हैं, लेकिन कई उत्तर सबसे अच्छे विकल्प नहीं थे। नीचे दिए गए क्षेत्रों को दोहराएँ, काम पर ऐसी परिस्थितियों को कैसे संभाला जाता है यह ध्यान से देखें और अपना तरीका उसी अनुसार ढालें।',
   },
   {
     min: -1,
     en: 'Needs improvement',
     hi: 'सुधार की आवश्यकता',
-    meanEn: 'Many answers were not the best choice. This is a chance to learn: go through every answer below, revise the rules and ask your supervisor for guidance.',
-    meanHi: 'कई उत्तर सबसे अच्छे विकल्प नहीं थे। यह सीखने का अवसर है: नीचे दिए गए हर उत्तर को देखें, नियमों को दोहराएँ और अपने पर्यवेक्षक से मार्गदर्शन लें।',
+    meanEn: 'Many answers were not the best choice. This is a chance to learn: go through every answer below, revise the rules, observe how experienced colleagues handle real cases and adapt the way you work.',
+    meanHi: 'कई उत्तर सबसे अच्छे विकल्प नहीं थे। यह सीखने का अवसर है: नीचे दिए गए हर उत्तर को देखें, नियमों को दोहराएँ, अनुभवी सहकर्मी वास्तविक मामलों को कैसे संभालते हैं यह ध्यान से देखें और अपने काम करने का तरीका ढालें।',
   },
 ];
 
@@ -46,18 +46,18 @@ const TIPS = [
   [/customer|applicant|service|satisf/i, 'Explain clearly what is missing and what the applicant must do next; be polite, but do not skip a rule to please them.', 'आवेदक को साफ़ बताएँ कि क्या कमी है और आगे क्या करना है; विनम्र रहें, पर उन्हें खुश करने के लिए कोई नियम न छोड़ें।'],
   [/respect/i, 'Speak respectfully to everyone — applicants, colleagues, housekeeping and seniors alike — especially when you disagree.', 'सभी से सम्मानपूर्वक बात करें — आवेदक, सहकर्मी, हाउसकीपिंग और वरिष्ठ — खासकर जब आप असहमत हों।'],
   [/disciplin|punctual/i, 'Be on time, follow the shift handover and registers exactly, and keep your workstation and records in order.', 'समय पर आएँ, शिफ्ट हैंडओवर और रजिस्टर का ठीक से पालन करें, और अपना कार्यस्थल व रिकॉर्ड व्यवस्थित रखें।'],
-  [/priorit|urgent|workload/i, 'When many tasks arrive together, do the safety- and deadline-critical work first, tell your supervisor what will be delayed, and do not leave half-done passes.', 'जब कई काम एक साथ आएँ, तो सुरक्षा और समय-सीमा वाले काम पहले करें, पर्यवेक्षक को बताएँ कि क्या देर होगा, और कोई पास अधूरा न छोड़ें।'],
+  [/priorit|urgent|workload/i, 'When many tasks arrive together, do the safety- and deadline-critical work first, let others know what will be delayed, and never leave a pass half-done. Observe how experienced colleagues order their work on busy days.', 'जब कई काम एक साथ आएँ, तो सुरक्षा और समय-सीमा वाले काम पहले करें, दूसरों को बताएँ कि क्या देर होगा, और कोई पास अधूरा न छोड़ें। व्यस्त दिनों में अनुभवी सहकर्मी अपना काम किस क्रम में करते हैं, इसे ध्यान से देखें।'],
   [/owner|accountab|responsib/i, 'Take ownership of your work: if you made a mistake, report it early and help fix it.', 'अपने काम की ज़िम्मेदारी लें: यदि गलती हुई है तो जल्दी बताएँ और उसे ठीक करने में मदद करें।'],
-  [/safety|security/i, 'Security comes first: when in doubt, stop, check the rule and ask your supervisor before issuing anything.', 'सुरक्षा सबसे पहले: संदेह होने पर रुकें, नियम जाँचें और कुछ भी जारी करने से पहले पर्यवेक्षक से पूछें।'],
+  [/safety|security/i, 'Security comes first: when in doubt, stop and check the rule before issuing anything. Learn from every doubtful case you come across.', 'सुरक्षा सबसे पहले: संदेह होने पर रुकें और कुछ भी जारी करने से पहले नियम जाँचें। हर संदेह वाले मामले से सीखें।'],
   [/composure|pressure|stress|calm/i, 'Under pressure, stay calm and polite, follow the procedure step by step and escalate instead of arguing.', 'दबाव में शांत और विनम्र रहें, प्रक्रिया का चरण-दर-चरण पालन करें और बहस करने के बजाय ऊपर बताएँ।'],
-  [/direction|instruction|follow|comply/i, 'Follow instructions from your supervisor and written orders; if you disagree, raise it respectfully after doing what is required.', 'पर्यवेक्षक के निर्देशों और लिखित आदेशों का पालन करें; असहमति हो तो आवश्यक कार्य करने के बाद सम्मानपूर्वक बात रखें।'],
+  [/direction|instruction|follow|comply/i, 'Follow instructions and written orders; if you disagree, raise it respectfully after doing what is required. Observe why each instruction exists.', 'निर्देशों और लिखित आदेशों का पालन करें; असहमति हो तो आवश्यक कार्य करने के बाद सम्मानपूर्वक बात रखें। हर निर्देश के पीछे का कारण समझें।'],
   [/self.?aware|feedback|learn/i, 'Ask for feedback on your work and accept it openly; note your own mistakes and what you will do differently.', 'अपने काम पर प्रतिक्रिया माँगें और उसे खुले मन से स्वीकारें; अपनी गलतियाँ नोट करें और तय करें कि आगे क्या अलग करेंगे।'],
   [/loyal|institution/i, 'Protect the organisation’s information and reputation; discuss concerns inside the team, not outside.', 'संगठन की जानकारी और प्रतिष्ठा की रक्षा करें; चिंताओं पर टीम के अंदर चर्चा करें, बाहर नहीं।'],
-  [/regulat|rule|sop|process|procedure|knowledge/i, 'Re-read the relevant rule or SOP, then ask your supervisor to take you through one real case of each topic below.', 'संबंधित नियम या SOP दोबारा पढ़ें, फिर पर्यवेक्षक से नीचे दिए हर विषय का एक वास्तविक उदाहरण समझें।'],
+  [/regulat|rule|sop|process|procedure|knowledge/i, 'Re-read the relevant rule or SOP, then look for a real case of each topic below at the counter and observe how it is handled.', 'संबंधित नियम या SOP दोबारा पढ़ें, फिर नीचे दिए हर विषय का एक वास्तविक मामला काउंटर पर देखें और समझें कि उसे कैसे संभाला जाता है।'],
 ];
 const DEFAULT_TIP = [
-  'Go through the questions below where your answer was not the best, read the correct answer and discuss it with your supervisor.',
-  'नीचे वे प्रश्न देखें जहाँ आपका उत्तर सबसे अच्छा नहीं था, सही उत्तर पढ़ें और अपने पर्यवेक्षक से चर्चा करें।',
+  'Go through the questions below where your answer was not the best, read the correct answer and the reason, and watch for similar cases in your daily work.',
+  'नीचे वे प्रश्न देखें जहाँ आपका उत्तर सबसे अच्छा नहीं था, सही उत्तर और उसका कारण पढ़ें, और रोज़ के काम में ऐसे ही मामलों पर ध्यान दें।',
 ];
 
 function tipFor(label, key) {
@@ -87,7 +87,9 @@ function personalNote(result, remarks, b) {
   const parts = (result.sections || []).filter((x) => x.total > 0);
   const best = [...parts].sort((x, y) => y.pct - x.pct)[0];
   const worst = [...parts].sort((x, y) => x.pct - y.pct)[0];
-  const remark = (remarks || [])[0];
+  // Remarks that send people to someone else are not used; improvement is their own.
+  const refers = (r) => /team lead|supervisor|टीम लीड|पर्यवेक्षक|connect with you|संपर्क करेगा/i.test(`${r.en || ''} ${r.hi || ''}`);
+  const remark = (remarks || []).find((r) => !refers(r));
   const baseEn = remark && remark.en ? remark.en : b.meanEn;
   const baseHi = remark && remark.hi ? remark.hi : b.meanHi;
   const en = [`${nameEn}, ${lowerFirst(baseEn)}`];
@@ -99,6 +101,10 @@ function personalNote(result, remarks, b) {
   if (worst && worst !== best && worst.pct < 70) {
     en.push(`Focus first on ${worst.name} (${worst.pct}%) — the points below show exactly what to work on.`);
     hi.push(`सबसे पहले ${worst.nameHi || worst.name} (${worst.pct}%) पर ध्यान दें — नीचे दिए बिंदु बताते हैं कि किस पर काम करना है।`);
+  }
+  if ((result.totalPct || 0) < 85 && !/adapt/i.test(baseEn)) {
+    en.push('Keep looking, observing, learning and adapting — every case at the counter is a chance to get better.');
+    hi.push('देखते रहें, ध्यान से समझते रहें, सीखते रहें और खुद को ढालते रहें — काउंटर पर हर मामला बेहतर होने का मौका है।');
   }
   return { en: en.join(' '), hi: hi.join(' ') };
 }
